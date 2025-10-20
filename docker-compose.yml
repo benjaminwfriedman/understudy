@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+      - "5678:5678"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:///./data/understudy.db}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - CARBON_TRACKING_ENABLED=${CARBON_TRACKING_ENABLED:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Azure GPU Training Configuration
+      - AZURE_TRAINING_ENABLED=${AZURE_TRAINING_ENABLED:-false}
+      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
+      - AZURE_STORAGE_ACCOUNT=${AZURE_STORAGE_ACCOUNT}
+      - AZURE_LOCATION=${AZURE_LOCATION}
+      - AZURE_STORAGE_CONTAINER=${AZURE_STORAGE_CONTAINER}
+      - AZURE_GPU_VM_SIZE=${AZURE_GPU_VM_SIZE}
+      - AZURE_MAX_CONCURRENT_VMS=${AZURE_MAX_CONCURRENT_VMS}
+      - AZURE_VM_REUSE=${AZURE_VM_REUSE}
+      - AZURE_VM_IDLE_MINUTES=${AZURE_VM_IDLE_MINUTES}
+      - AZURE_AUTO_SHUTDOWN=${AZURE_AUTO_SHUTDOWN}
+      - AZURE_USE_SPOT=${AZURE_USE_SPOT}
+      - AZURE_MAX_SPOT_PRICE=${AZURE_MAX_SPOT_PRICE}
+      - AZURE_CARBON_REGION=${AZURE_CARBON_REGION}
+      - AZURE_SSH_PUBLIC_KEY=${AZURE_SSH_PUBLIC_KEY}
+      # Lambda Cloud GPU Training Configuration
+      - LAMBDA_TRAINING_ENABLED=${LAMBDA_TRAINING_ENABLED:-false}
+      - LAMBDA_CLOUD_API_KEY=${LAMBDA_CLOUD_API_KEY}
+      - LAMBDA_INSTANCE_TYPE=${LAMBDA_INSTANCE_TYPE:-gpu_1x_gh200}
+      - LAMBDA_REGION=${LAMBDA_REGION:-us-east-3}
+      - LAMBDA_MAX_CONCURRENT_INSTANCES=${LAMBDA_MAX_CONCURRENT_INSTANCES:-1}
+      - LAMBDA_INSTANCE_REUSE=${LAMBDA_INSTANCE_REUSE:-true}
+      - LAMBDA_INSTANCE_IDLE_MINUTES=${LAMBDA_INSTANCE_IDLE_MINUTES:-5}
+      - LAMBDA_SSH_KEY_NAME=${LAMBDA_SSH_KEY_NAME:-understudy-key-v2}
+      # RunPod GPU Training Configuration
+      - RUNPOD_TRAINING_ENABLED=${RUNPOD_TRAINING_ENABLED:-false}
+      - RUNPOD_POD_REUSE=${RUNPOD_POD_REUSE:-false}
+      - RUNPOD_POD_IDLE_MINUTES=${RUNPOD_POD_IDLE_MINUTES:-3}
+      - RUNPOD_POD_AUTO_SHUTDOWN=${RUNPOD_POD_AUTO_SHUTDOWN:-true}
+      - RUNPOD_API_KEY=${RUNPOD_API_KEY}
+      - RUNPOD_GPU_TYPE=${RUNPOD_GPU_TYPE:-NVIDIA GeForce RTX 4090}
+      - RUNPOD_CONTAINER_IMAGE=${RUNPOD_CONTAINER_IMAGE:-runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel-ubuntu22.04}
+      - RUNPOD_DISK_SIZE=${RUNPOD_DISK_SIZE:-50}
+      - RUNPOD_SSH_PUBLIC_KEY=${RUNPOD_SSH_PUBLIC_KEY}
+      - RUNPOD_SSH_PRIVATE_KEY_PATH=${RUNPOD_SSH_PRIVATE_KEY_PATH:-/app/keys/runpod_ssh_key}
+      # Redis for job queue
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_DB=${REDIS_DB:-0}
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./checkpoints:/app/checkpoints
+      - ./carbon_data:/app/carbon_data
+      - ./logs:/app/logs
+      - ./keys:/app/keys
+      - ~/.azure:/home/appuser/.azure
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 48G  # Allocated for CPU training
+        reservations:
+          cpus: '4.0'
+          memory: 32G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  default:
+    name: understudy-network
+
+volumes:
+  data:
+    driver: local
+  models:
+    driver: local
+  checkpoints:
+    driver: local
+  carbon_data:
+    driver: local
+  logs:
+    driver: local
+  redis_data:
+    driver: local

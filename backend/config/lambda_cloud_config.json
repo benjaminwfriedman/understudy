@@ -1,0 +1,86 @@
+{
+  "created_at": "2025-10-18T19:24:01.013556",
+  "version": "1.0.0",
+  "available_instances": [
+    {
+      "name": "gpu_1x_gh200",
+      "description": "1x GH200 (96 GB)",
+      "gpu": "GH200 (96 GB)",
+      "price_cents_per_hour": 149,
+      "available_regions": [
+        "us-east-3"
+      ]
+    },
+    {
+      "name": "gpu_8x_b200_sxm6",
+      "description": "8x B200 (180 GB SXM6)",
+      "gpu": "B200 (180 GB SXM6)",
+      "price_cents_per_hour": 3992,
+      "available_regions": [
+        "australia-east-1"
+      ]
+    },
+    {
+      "name": "gpu_1x_h100_sxm5",
+      "description": "1x H100 (80 GB SXM5)",
+      "gpu": "H100 (80 GB SXM5)",
+      "price_cents_per_hour": 329,
+      "available_regions": [
+        "us-south-2",
+        "us-south-3"
+      ]
+    },
+    {
+      "name": "gpu_8x_a100_80gb_sxm4",
+      "description": "8x A100 (80 GB SXM4)",
+      "gpu": "A100 (80 GB SXM4)",
+      "price_cents_per_hour": 1432,
+      "available_regions": [
+        "us-midwest-1",
+        "us-east-1",
+        "australia-east-1"
+      ]
+    },
+    {
+      "name": "gpu_1x_a10",
+      "description": "1x A10 (24 GB PCIe)",
+      "gpu": "A10 (24 GB PCIe)",
+      "price_cents_per_hour": 75,
+      "available_regions": [
+        "us-east-1",
+        "us-west-1"
+      ]
+    },
+    {
+      "name": "gpu_1x_a100_sxm4",
+      "description": "1x A100 (40 GB SXM4)",
+      "gpu": "A100 (40 GB SXM4)",
+      "price_cents_per_hour": 129,
+      "available_regions": [
+        "us-east-1",
+        "asia-south-1"
+      ]
+    },
+    {
+      "name": "gpu_8x_a100",
+      "description": "8x A100 (40 GB SXM4)",
+      "gpu": "A100 (40 GB SXM4)",
+      "price_cents_per_hour": 1032,
+      "available_regions": [
+        "asia-northeast-1"
+      ]
+    },
+    {
+      "name": "gpu_8x_v100",
+      "description": "8x Tesla V100 (16 GB)",
+      "gpu": "Tesla V100 (16 GB)",
+      "price_cents_per_hour": 440,
+      "available_regions": [
+        "us-south-1"
+      ]
+    }
+  ],
+  "selected_instance_type": "gpu_1x_gh200",
+  "estimated_cost_per_hour": 1.49,
+  "updated_at": "2025-10-18T21:13:17.916444"
+}
