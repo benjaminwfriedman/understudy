@@ -9,7 +9,7 @@ Understudy automatically captures your LLM interactions and progressively trains
 - 💰 **Massive Cost Reduction**: 10-100x cheaper inference with trained SLMs
 - 🌱 **Carbon Tracking**: Real-time emissions monitoring with CodeCarbon
 - 🔗 **LangChain Compatible**: Drop-in replacement for LangChain LLMs
-- 🕸️ **LangGraph Support**: Full compatibility with complex agent workflows
+- 🕸️ **LangGraph Support**: Full compatibility with complex agent workflows (FUTURE)
 - 📊 **Visual Dashboard**: Monitor training progress and carbon impact
 - 🔄 **Seamless Switchover**: Automatic transition when SLM reaches threshold
 - 🤖 **Multi-Model Support**: OpenAI, Anthropic, and more
@@ -18,16 +18,32 @@ Understudy automatically captures your LLM interactions and progressively trains
 
 ### 1. Installation
 
+A. Clone the repo:
+
 ```bash
 # Clone the repository
 git clone https://github.com/your-org/understudy.git
 cd understudy
+```
+B. Run runpod_config.sh 
 
-# Start with Docker Compose
-docker-compose up -d
+```bash
+./runpod_config.sh
 
-# Or install Python client
-pip install understudy-client
+# follow instructions from console to add it to your runpod account
+```
+
+C. Update docker-compose with your secrets
+
+    * OPENAI_API_KEY for initial LLM inferance
+    * HF_TOKEN for access to Llama 3.2 1B
+    * RUNPOD_API_KEY for remote SLM fine-tuning
+    * RUNPOD_SSH_PUBLIC_KEY from runpod_config.sh
+    * RUNPOD_SSH_PRIVATE_KEY_PATH path to private key generated from runpod_config.sh
+
+D. Build and start containers 
+```bash
+docker-compose up
 ```
 
 ### 2. Basic Usage

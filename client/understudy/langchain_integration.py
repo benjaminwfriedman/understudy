@@ -1,6 +1,6 @@
 from typing import Optional, List, Any, Dict, Iterator
-from langchain_core.llms.base import LLM
-from langchain_core.chat_models.base import BaseChatModel
+from langchain_core.language_models.llms import LLM
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage, SystemMessage
 from langchain_core.callbacks.manager import CallbackManagerForLLMRun
 from langchain_core.outputs import ChatResult, ChatGeneration, LLMResult, Generation
@@ -21,6 +21,21 @@ class UnderstudyLLM(LLM):
     temperature: float = Field(default=0.7, description="Sampling temperature")
     top_p: float = Field(default=1.0, description="Top-p sampling parameter")
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
+    
+    def __init__(self, **kwargs):
+        """Initialize the UnderstudyLLM with proper field handling."""
+        super().__init__(**kwargs)
+        # Ensure fields are properly initialized (not FieldInfo objects)
+        if hasattr(self.max_tokens, 'default'):
+            self.max_tokens = 256
+        if hasattr(self.temperature, 'default'):
+            self.temperature = 0.7
+        if hasattr(self.top_p, 'default'):
+            self.top_p = 1.0
+        if hasattr(self.timeout, 'default'):
+            self.timeout = 30.0
+        if hasattr(self.api_key, 'default'):
+            self.api_key = None
     
     @property
     def _llm_type(self) -> str:
@@ -49,17 +64,33 @@ class UnderstudyLLM(LLM):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         
+        # Filter kwargs to only include JSON-serializable values
+        serializable_kwargs = {}
+        for key, value in kwargs.items():
+            try:
+                import json
+                json.dumps(value)
+                serializable_kwargs[key] = value
+            except (TypeError, ValueError):
+                # Skip non-serializable values
+                continue
+        
+        # Get actual values from fields (handle FieldInfo objects)
+        max_tokens_value = self.max_tokens.default if hasattr(self.max_tokens, 'default') else self.max_tokens
+        temperature_value = self.temperature.default if hasattr(self.temperature, 'default') else self.temperature
+        top_p_value = self.top_p.default if hasattr(self.top_p, 'default') else self.top_p
+        
         # Prepare request data
         request_data = {
             "prompt": prompt,
-            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
-            "temperature": kwargs.get("temperature", self.temperature),
-            "top_p": kwargs.get("top_p", self.top_p),
+            "max_tokens": kwargs.get("max_tokens", max_tokens_value),
+            "temperature": kwargs.get("temperature", temperature_value),
+            "top_p": kwargs.get("top_p", top_p_value),
             "stop": stop,
             "langchain_metadata": {
                 "run_id": str(run_manager.run_id) if run_manager else None,
                 "llm_type": self._llm_type,
-                **kwargs
+                **serializable_kwargs
             }
         }
         
@@ -109,16 +140,32 @@ class UnderstudyLLM(LLM):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         
+        # Filter kwargs to only include JSON-serializable values
+        serializable_kwargs = {}
+        for key, value in kwargs.items():
+            try:
+                import json
+                json.dumps(value)
+                serializable_kwargs[key] = value
+            except (TypeError, ValueError):
+                # Skip non-serializable values
+                continue
+        
+        # Get actual values from fields (handle FieldInfo objects)
+        max_tokens_value = self.max_tokens.default if hasattr(self.max_tokens, 'default') else self.max_tokens
+        temperature_value = self.temperature.default if hasattr(self.temperature, 'default') else self.temperature
+        top_p_value = self.top_p.default if hasattr(self.top_p, 'default') else self.top_p
+        
         request_data = {
             "prompt": prompt,
-            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
-            "temperature": kwargs.get("temperature", self.temperature),
-            "top_p": kwargs.get("top_p", self.top_p),
+            "max_tokens": kwargs.get("max_tokens", max_tokens_value),
+            "temperature": kwargs.get("temperature", temperature_value),
+            "top_p": kwargs.get("top_p", top_p_value),
             "stop": stop,
             "langchain_metadata": {
                 "run_id": str(run_manager.run_id) if run_manager else None,
                 "llm_type": self._llm_type,
-                **kwargs
+                **serializable_kwargs
             }
         }
         
@@ -167,6 +214,21 @@ class UnderstudyChatModel(BaseChatModel):
     top_p: float = Field(default=1.0, description="Top-p sampling parameter")
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     
+    def __init__(self, **kwargs):
+        """Initialize the UnderstudyChatModel with proper field handling."""
+        super().__init__(**kwargs)
+        # Ensure fields are properly initialized (not FieldInfo objects)
+        if hasattr(self.max_tokens, 'default'):
+            self.max_tokens = 256
+        if hasattr(self.temperature, 'default'):
+            self.temperature = 0.7
+        if hasattr(self.top_p, 'default'):
+            self.top_p = 1.0
+        if hasattr(self.timeout, 'default'):
+            self.timeout = 30.0
+        if hasattr(self.api_key, 'default'):
+            self.api_key = None
+    
     @property
     def _llm_type(self) -> str:
         return "understudy-chat"
@@ -206,16 +268,32 @@ class UnderstudyChatModel(BaseChatModel):
             else:
                 formatted_messages.append({"role": "user", "content": str(msg.content)})
         
+        # Filter kwargs to only include JSON-serializable values
+        serializable_kwargs = {}
+        for key, value in kwargs.items():
+            try:
+                import json
+                json.dumps(value)
+                serializable_kwargs[key] = value
+            except (TypeError, ValueError):
+                # Skip non-serializable values
+                continue
+        
+        # Get actual values from fields (handle FieldInfo objects)
+        max_tokens_value = self.max_tokens.default if hasattr(self.max_tokens, 'default') else self.max_tokens
+        temperature_value = self.temperature.default if hasattr(self.temperature, 'default') else self.temperature
+        top_p_value = self.top_p.default if hasattr(self.top_p, 'default') else self.top_p
+        
         request_data = {
             "messages": formatted_messages,
-            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
-            "temperature": kwargs.get("temperature", self.temperature),
-            "top_p": kwargs.get("top_p", self.top_p),
+            "max_tokens": kwargs.get("max_tokens", max_tokens_value),
+            "temperature": kwargs.get("temperature", temperature_value),
+            "top_p": kwargs.get("top_p", top_p_value),
             "stop": stop,
             "langchain_metadata": {
                 "run_id": str(run_manager.run_id) if run_manager else None,
                 "llm_type": self._llm_type,
-                **kwargs
+                **serializable_kwargs
             }
         }
         
@@ -277,16 +355,32 @@ class UnderstudyChatModel(BaseChatModel):
             else:
                 formatted_messages.append({"role": "user", "content": str(msg.content)})
         
+        # Filter kwargs to only include JSON-serializable values
+        serializable_kwargs = {}
+        for key, value in kwargs.items():
+            try:
+                import json
+                json.dumps(value)
+                serializable_kwargs[key] = value
+            except (TypeError, ValueError):
+                # Skip non-serializable values
+                continue
+        
+        # Get actual values from fields (handle FieldInfo objects)
+        max_tokens_value = self.max_tokens.default if hasattr(self.max_tokens, 'default') else self.max_tokens
+        temperature_value = self.temperature.default if hasattr(self.temperature, 'default') else self.temperature
+        top_p_value = self.top_p.default if hasattr(self.top_p, 'default') else self.top_p
+        
         request_data = {
             "messages": formatted_messages,
-            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
-            "temperature": kwargs.get("temperature", self.temperature),
-            "top_p": kwargs.get("top_p", self.top_p),
+            "max_tokens": kwargs.get("max_tokens", max_tokens_value),
+            "temperature": kwargs.get("temperature", temperature_value),
+            "top_p": kwargs.get("top_p", top_p_value),
             "stop": stop,
             "langchain_metadata": {
                 "run_id": str(run_manager.run_id) if run_manager else None,
                 "llm_type": self._llm_type,
-                **kwargs
+                **serializable_kwargs
             }
         }
         

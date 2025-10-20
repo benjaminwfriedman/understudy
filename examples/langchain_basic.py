@@ -32,7 +32,7 @@ async def main():
     # Create endpoint
     print("\n📡 Creating Understudy endpoint...")
     endpoint = client.create_endpoint(
-        name="customer-support-demo",
+        name="customer-support-demo-2",
         description="Demo endpoint for customer support automation",
         llm_provider="openai",
         llm_model="gpt-3.5-turbo",

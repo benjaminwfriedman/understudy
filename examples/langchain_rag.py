@@ -11,12 +11,8 @@ This example demonstrates how to:
 
 import asyncio
 from pathlib import Path
-from understudy import Understudy, UnderstudyChatModel
-from langchain.chains import RetrievalQA
-from langchain.document_loaders import TextFileLoader
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import FAISS
+from understudy import Understudy, UnderstudyLLM
+from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 
 
@@ -154,31 +150,35 @@ async def main():
     print("\n📄 Setting up document corpus...")
     docs_dir = await setup_documents()
     
-    # Load and process documents
-    documents = []
+    # Load documents into memory (simplified approach)
+    documents_text = {}
     for doc_file in docs_dir.glob("*.txt"):
-        loader = TextFileLoader(str(doc_file))
-        docs = loader.load()
-        documents.extend(docs)
+        with open(doc_file, 'r') as f:
+            documents_text[doc_file.name] = f.read()
     
-    print(f"✅ Loaded {len(documents)} documents")
+    print(f"✅ Loaded {len(documents_text)} documents")
     
-    # Split documents into chunks
-    text_splitter = CharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200
-    )
-    splits = text_splitter.split_documents(documents)
-    print(f"✅ Split into {len(splits)} chunks")
+    # Create a simple in-memory "vector store" (for demo purposes)
+    # In production, you would use real embeddings and vector search
+    def simple_search(question: str, docs: dict, k: int = 3) -> str:
+        """Simple keyword-based search for demo."""
+        question_lower = question.lower()
+        relevant_chunks = []
+        
+        for filename, content in docs.items():
+            # Split into paragraphs
+            paragraphs = content.split('\n\n')
+            for para in paragraphs:
+                if any(word in para.lower() for word in question_lower.split()):
+                    relevant_chunks.append(para)
+        
+        # Return top k chunks
+        return '\n\n'.join(relevant_chunks[:k])
     
-    # Create embeddings and vector store
-    print("\n🔍 Creating vector store...")
-    embeddings = OpenAIEmbeddings()
-    vectorstore = FAISS.from_documents(splits, embeddings)
-    print("✅ Vector store created")
+    print("✅ Search function created")
     
-    # Create Understudy chat model
-    llm = UnderstudyChatModel(
+    # Create Understudy LLM (same as langchain_basic)
+    llm = UnderstudyLLM(
         endpoint_id=endpoint_id,
         base_url="http://localhost:8000",
         max_tokens=300,
@@ -201,14 +201,8 @@ Answer:"""
         input_variables=["context", "question"]
     )
     
-    # Create RAG chain
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=vectorstore.as_retriever(search_kwargs={"k": 3}),
-        chain_type_kwargs={"prompt": PROMPT},
-        return_source_documents=True
-    )
+    # Create simple Q&A chain
+    qa_chain = LLMChain(llm=llm, prompt=PROMPT)
     
     # Sample questions for demo
     questions = [
@@ -231,16 +225,17 @@ Answer:"""
     for i, question in enumerate(questions, 1):
         print(f"\n❓ Question {i}/{len(questions)}: {question}")
         
-        # Get answer from RAG system
-        result = qa_chain({"query": question})
-        answer = result["result"]
-        sources = result["source_documents"]
+        # Retrieve relevant context
+        context = simple_search(question, documents_text, k=3)
+        
+        # Get answer from LLM with context
+        answer = qa_chain.run(context=context, question=question)
         
         print(f"🤖 Answer: {answer}")
         
-        # Show sources
-        if sources:
-            print(f"📚 Sources: {len(sources)} documents")
+        # Show if we found relevant context
+        if context:
+            print(f"📚 Found relevant context ({len(context)} chars)")
         
         print("-" * 40)
     
