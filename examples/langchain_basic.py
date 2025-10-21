@@ -101,6 +101,14 @@ Please provide a helpful, professional response:"""
         {
             "context": "Mobile apps available for iOS and Android",
             "question": "Do you have a mobile app?"
+        },
+        {
+            "context": "App was first created in 2 weeks ago",
+            "question": "How long ago was the app created"
+        },
+        {
+            "context": "We have consumer and enterprise subscriptions",
+            "question": "Do you have a consumer subscription?"
         }
     ]
     
