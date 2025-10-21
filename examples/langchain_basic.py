@@ -32,7 +32,7 @@ async def main():
     # Create endpoint
     print("\n📡 Creating Understudy endpoint...")
     endpoint = client.create_endpoint(
-        name="customer-support-demo",
+        name="customer-support-demo-2",
         description="Demo endpoint for customer support automation",
         llm_provider="openai",
         llm_model="gpt-3.5-turbo",
@@ -101,6 +101,14 @@ Please provide a helpful, professional response:"""
         {
             "context": "Mobile apps available for iOS and Android",
             "question": "Do you have a mobile app?"
+        },
+        {
+            "context": "App was first created in 2 weeks ago",
+            "question": "How long ago was the app created"
+        },
+        {
+            "context": "We have consumer and enterprise subscriptions",
+            "question": "Do you have a consumer subscription?"
         }
     ]
     

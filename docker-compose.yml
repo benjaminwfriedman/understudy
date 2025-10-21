@@ -9,52 +9,28 @@ services:
       - "8000:8000"
       - "5678:5678"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-sqlite+aiosqlite:///./data/understudy.db}
+      - DATABASE_URL=sqlite+aiosqlite:///./data/understudy.db
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - HF_TOKEN=${HF_TOKEN}
-      - CARBON_TRACKING_ENABLED=${CARBON_TRACKING_ENABLED:-true}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      # Azure GPU Training Configuration
-      - AZURE_TRAINING_ENABLED=${AZURE_TRAINING_ENABLED:-false}
-      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
-      - AZURE_STORAGE_ACCOUNT=${AZURE_STORAGE_ACCOUNT}
-      - AZURE_LOCATION=${AZURE_LOCATION}
-      - AZURE_STORAGE_CONTAINER=${AZURE_STORAGE_CONTAINER}
-      - AZURE_GPU_VM_SIZE=${AZURE_GPU_VM_SIZE}
-      - AZURE_MAX_CONCURRENT_VMS=${AZURE_MAX_CONCURRENT_VMS}
-      - AZURE_VM_REUSE=${AZURE_VM_REUSE}
-      - AZURE_VM_IDLE_MINUTES=${AZURE_VM_IDLE_MINUTES}
-      - AZURE_AUTO_SHUTDOWN=${AZURE_AUTO_SHUTDOWN}
-      - AZURE_USE_SPOT=${AZURE_USE_SPOT}
-      - AZURE_MAX_SPOT_PRICE=${AZURE_MAX_SPOT_PRICE}
-      - AZURE_CARBON_REGION=${AZURE_CARBON_REGION}
-      - AZURE_SSH_PUBLIC_KEY=${AZURE_SSH_PUBLIC_KEY}
-      # Lambda Cloud GPU Training Configuration
-      - LAMBDA_TRAINING_ENABLED=${LAMBDA_TRAINING_ENABLED:-false}
-      - LAMBDA_CLOUD_API_KEY=${LAMBDA_CLOUD_API_KEY}
-      - LAMBDA_INSTANCE_TYPE=${LAMBDA_INSTANCE_TYPE:-gpu_1x_gh200}
-      - LAMBDA_REGION=${LAMBDA_REGION:-us-east-3}
-      - LAMBDA_MAX_CONCURRENT_INSTANCES=${LAMBDA_MAX_CONCURRENT_INSTANCES:-1}
-      - LAMBDA_INSTANCE_REUSE=${LAMBDA_INSTANCE_REUSE:-true}
-      - LAMBDA_INSTANCE_IDLE_MINUTES=${LAMBDA_INSTANCE_IDLE_MINUTES:-5}
-      - LAMBDA_SSH_KEY_NAME=${LAMBDA_SSH_KEY_NAME:-understudy-key-v2}
+      - HF_TOKEN={HF_TOKEN}
+      - CARBON_TRACKING_ENABLED=true
+      - LOG_LEVEL=INFO
       # RunPod GPU Training Configuration
-      - RUNPOD_TRAINING_ENABLED=${RUNPOD_TRAINING_ENABLED:-false}
-      - RUNPOD_POD_REUSE=${RUNPOD_POD_REUSE:-false}
-      - RUNPOD_POD_IDLE_MINUTES=${RUNPOD_POD_IDLE_MINUTES:-3}
-      - RUNPOD_POD_AUTO_SHUTDOWN=${RUNPOD_POD_AUTO_SHUTDOWN:-true}
+      - RUNPOD_TRAINING_ENABLED=true
+      - RUNPOD_POD_REUSE=false
+      - RUNPOD_POD_IDLE_MINUTES=3
+      - RUNPOD_POD_AUTO_SHUTDOWN=true
       - RUNPOD_API_KEY=${RUNPOD_API_KEY}
-      - RUNPOD_GPU_TYPE=${RUNPOD_GPU_TYPE:-NVIDIA GeForce RTX 4090}
-      - RUNPOD_CONTAINER_IMAGE=${RUNPOD_CONTAINER_IMAGE:-runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel-ubuntu22.04}
-      - RUNPOD_DISK_SIZE=${RUNPOD_DISK_SIZE:-50}
-      - RUNPOD_SSH_PUBLIC_KEY=${RUNPOD_SSH_PUBLIC_KEY}
-      - RUNPOD_SSH_PRIVATE_KEY_PATH=${RUNPOD_SSH_PRIVATE_KEY_PATH:-/app/keys/runpod_ssh_key}
-      # Redis for job queue
-      - REDIS_HOST=${REDIS_HOST:-redis}
-      - REDIS_PORT=${REDIS_PORT:-6379}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - REDIS_DB=${REDIS_DB:-0}
+      - RUNPOD_GPU_TYPE=NVIDIA GeForce RTX 4090
+      - RUNPOD_CONTAINER_IMAGE=runpod/pytorch:2.0.1-py3.10-cuda11.8.0-devel-ubuntu22.04
+      - RUNPOD_DISK_SIZE=50
+      - RUNPOD_SSH_PUBLIC_KEY="" ## set to the public key copied to clipboard after runpod_config.sh
+      - RUNPOD_SSH_PRIVATE_KEY_PATH=/app/keys/{generated_key} ## Change the name to the key you create with runpod_config.sh
+      # - GPU_TRAINING_PROVIDER=lambda
+      # Redis for job queue (optional, falls back to in-memory)
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
     volumes:
       - ./data:/app/data
       - ./models:/app/models

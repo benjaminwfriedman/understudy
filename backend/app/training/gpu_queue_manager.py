@@ -68,7 +68,7 @@ class GPUQueueManager:
         self.redis_db = int(os.getenv("REDIS_DB", "0"))
         
         # Cloud provider selection
-        self.default_provider = os.getenv("GPU_TRAINING_PROVIDER", "lambda").lower()
+        self.default_provider = os.getenv("GPU_TRAINING_PROVIDER", "runpod").lower()
         
         # Azure GPU configuration
         self.azure_max_concurrent_vms = int(os.getenv("AZURE_MAX_CONCURRENT_VMS", "1"))

@@ -1,0 +1,23 @@
+# Understudy client dependencies for running examples
+# Backend services are handled by Docker containers
+
+# Core client dependencies
+httpx==0.25.1
+pydantic==2.5.0
+typing-extensions>=4.8.0
+
+# LangChain and LangGraph for examples
+langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-openai>=0.0.2
+langchain-community>=0.0.10
+langgraph>=0.0.20
+
+# For RAG example
+faiss-cpu>=1.7.4
+
+# OpenAI for embeddings and LLM fallback
+openai>=1.6.1
+
+# Install the local understudy client package
+-e ./client

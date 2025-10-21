@@ -9,7 +9,7 @@ Understudy automatically captures your LLM interactions and progressively trains
 - 💰 **Massive Cost Reduction**: 10-100x cheaper inference with trained SLMs
 - 🌱 **Carbon Tracking**: Real-time emissions monitoring with CodeCarbon
 - 🔗 **LangChain Compatible**: Drop-in replacement for LangChain LLMs
-- 🕸️ **LangGraph Support**: Full compatibility with complex agent workflows
+- 🕸️ **LangGraph Support**: Full compatibility with complex agent workflows (**FUTURE**)
 - 📊 **Visual Dashboard**: Monitor training progress and carbon impact
 - 🔄 **Seamless Switchover**: Automatic transition when SLM reaches threshold
 - 🤖 **Multi-Model Support**: OpenAI, Anthropic, and more
@@ -18,19 +18,38 @@ Understudy automatically captures your LLM interactions and progressively trains
 
 ### 1. Installation
 
+A. Clone the repo:
+
 ```bash
 # Clone the repository
 git clone https://github.com/your-org/understudy.git
 cd understudy
+```
+B. Run runpod_config.sh 
 
-# Start with Docker Compose
-docker-compose up -d
+```bash
+./runpod_config.sh
 
-# Or install Python client
-pip install understudy-client
+# follow instructions from console to add it to your runpod account
+```
+
+C. Update docker-compose with your secrets
+
+    * OPENAI_API_KEY for initial LLM inferance
+    * HF_TOKEN for access to Llama 3.2 1B
+    * RUNPOD_API_KEY for remote SLM fine-tuning
+    * RUNPOD_SSH_PUBLIC_KEY from runpod_config.sh
+    * RUNPOD_SSH_PRIVATE_KEY_PATH path to private key generated from runpod_config.sh
+
+D. Build and start containers 
+```bash
+docker-compose up
 ```
 
 ### 2. Basic Usage
+```bash
+pip install -r requiremets.txt # includes the local install of the understudy-client
+```
 
 ```python
 from understudy import Understudy, UnderstudyLLM
@@ -56,28 +75,15 @@ chain = prompt | llm | output_parser
 response = chain.invoke({"input": "Hello, world!"})
 ```
 
-### 3. Monitor & Activate
-
-```python
-# Check training progress
-metrics = client.get_metrics(endpoint["id"])
-print(f"Similarity: {metrics['avg_similarity']:.2%}")
-
-# Activate SLM when ready
-if metrics['avg_similarity'] > 0.95:
-    client.activate_slm(endpoint["id"])
-    print("🎉 SLM activated! Enjoying 10-100x cost savings!")
-```
 
 ## 📊 Dashboard
 
 Visit `http://localhost:3000` to see:
 
 - **Endpoint Management**: Create and configure LLM-to-SLM endpoints
-- **Training Progress**: Real-time similarity metrics and training status
-- **Carbon Impact**: Emissions tracking and environmental savings
-- **Cost Analytics**: Before/after cost comparisons
-- **LangChain Integration**: Setup guides and examples
+- **Training Progress**: Real-time similarity metrics and training status (**FUTURE**)
+- **Carbon Impact**: Emissions tracking and environmental savings (**Buggy**)
+- **Cost Analytics**: Before/after cost comparisons (**FUTURE**)
 
 ## 🔧 Architecture
 
@@ -177,138 +183,57 @@ Example impact after 1000 inferences:
 docker-compose up -d
 ```
 
-### Production
+### Debug
 ```bash
-docker-compose -f docker-compose.prod.yml up -d
+./debug.sh ## triggers debug settings
+```
+#### vscode debug launch.json configuration
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Attach to Docker Backend",
+            "type": "python",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5678
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/backend",
+                    "remoteRoot": "/app"
+                }
+            ],
+            "justMyCode": false,
+            "redirectOutput": true,
+            "logToFile": true
+        },
+        {
+            "name": "Containers: Python - Fastapi",
+            "type": "docker",
+            "request": "launch",
+            "preLaunchTask": "docker-run: debug",
+            "python": {
+                "pathMappings": [
+                    {
+                        "localRoot": "${workspaceFolder}",
+                        "remoteRoot": "/app"
+                    }
+                ],
+                "projectType": "fastapi"
+            }
+        }
+    ]
+}
 ```
 
-### Kubernetes
+
+### Kubernetes (**FUTURE**)
 ```bash
 kubectl apply -f k8s/
 ```
 
-## 📖 Documentation
-
-- [**Getting Started Guide**](docs/getting-started.md)
-- [**LangChain Integration**](docs/langchain-integration.md)
-- [**LangGraph Support**](docs/langgraph-support.md)
-- [**API Reference**](docs/api-reference.md)
-- [**Deployment Guide**](docs/deployment.md)
-- [**Carbon Tracking**](docs/carbon-tracking.md)
-
-## 🛠️ Configuration
-
-### Environment Variables
-
-```bash
-# Backend
-OPENAI_API_KEY=your-openai-key
-ANTHROPIC_API_KEY=your-anthropic-key
-DATABASE_URL=sqlite+aiosqlite:///./understudy.db
-CARBON_TRACKING_ENABLED=true
-
-# Training
-DEFAULT_SIMILARITY_THRESHOLD=0.95
-DEFAULT_BATCH_SIZE=100
-BASE_MODEL_PATH=meta-llama/Llama-3.2-1B
-
-# Carbon Tracking
-COUNTRY_ISO_CODE=USA
-CARBON_DATA_DIR=./carbon_data
-```
-
-### Endpoint Configuration
-
-```python
-endpoint = client.create_endpoint(
-    name="my-endpoint",
-    llm_provider="openai",
-    llm_model="gpt-3.5-turbo",
-    config={
-        "training_batch_size": 100,
-        "similarity_threshold": 0.95,
-        "auto_switchover": False,
-        "lora_r": 8,
-        "lora_alpha": 16,
-        "learning_rate": 3e-4,
-        "track_carbon": True
-    }
-)
-```
-
-## 🧪 Development
-
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- Docker & Docker Compose
-
-### Setup
-```bash
-# Backend
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-
-# Frontend  
-cd frontend
-npm install
-npm run dev
-
-# Client SDK
-cd client
-pip install -e .
-```
-
-### Testing
-```bash
-# Backend tests
-cd backend
-pytest
-
-# Frontend tests
-cd frontend
-npm test
-
-# Integration tests
-python examples/langchain_basic.py
-```
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🆘 Support
-
-- **Documentation**: [docs.understudy.ai](https://docs.understudy.ai)
-- **Issues**: [GitHub Issues](https://github.com/your-org/understudy/issues)
-- **Discord**: [Understudy Community](https://discord.gg/understudy)
-- **Email**: support@understudy.ai
-
-## 🗺️ Roadmap
-
-- [ ] **Q1 2024**: Anthropic Claude integration
-- [ ] **Q2 2024**: Multi-GPU training support
-- [ ] **Q3 2024**: Kubernetes operator
-- [ ] **Q4 2024**: Advanced LoRA techniques (QLoRA, AdaLoRA)
-- [ ] **2025**: Custom base model support
-
-## ⭐ Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=your-org/understudy&type=Date)](https://star-history.com/#your-org/understudy&Date)
-
----
-
-**Built with ❤️ by the Understudy team**
 
 *Reduce AI costs, reduce carbon footprint, one SLM at a time.* 🌍
