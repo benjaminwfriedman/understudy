@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     
     # Monitoring
     LOG_LEVEL: str = "INFO"
-    LOG_FILE: str = "understudy.log"
+    LOG_FILE: str = os.getenv("LOG_FILE", "/tmp/understudy.log")
     
     class Config:
         env_file = ".env"

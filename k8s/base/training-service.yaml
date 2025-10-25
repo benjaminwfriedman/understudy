@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: training-service
+  namespace: understudy
+spec:
+  selector:
+    app: training-service
+  ports:
+    - name: http
+      port: 8002
+      targetPort: 8002
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: training-service
+  namespace: understudy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: training-service
+  template:
+    metadata:
+      labels:
+        app: training-service
+    spec:
+      serviceAccountName: training-service
+      containers:
+      - name: training-service
+        image: bennyfriedman/understudy-training:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8002
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: understudy-secrets
+              key: DATABASE_URL
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: understudy-secrets
+              key: REDIS_URL
+        - name: RUNPOD_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: understudy-secrets
+              key: RUNPOD_API_KEY
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: understudy-secrets
+              key: HF_TOKEN
+        - name: BACKEND_URL
+          value: http://backend-service:8000
+        - name: K8S_IN_CLUSTER
+          value: "true"
+        - name: NAMESPACE
+          value: understudy
+        envFrom:
+        - configMapRef:
+            name: understudy-config
+        volumeMounts:
+        - name: model-weights
+          mountPath: /app/model_weights
+        - name: training-data
+          mountPath: /app/data
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+      volumes:
+      - name: model-weights
+        persistentVolumeClaim:
+          claimName: model-weights-pvc
+      - name: training-data
+        persistentVolumeClaim:
+          claimName: training-data-pvc

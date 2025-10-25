@@ -1,0 +1,128 @@
+# Template for SLM Inference Deployments (created dynamically by Backend Service)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slm-{{endpoint_id}}-v{{version}}
+  namespace: understudy
+  labels:
+    app: slm-inference
+    endpoint_id: "{{endpoint_id}}"
+    version: "{{version}}"
+    mode: endpoint
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: slm-inference
+      endpoint_id: "{{endpoint_id}}"
+  template:
+    metadata:
+      labels:
+        app: slm-inference
+        endpoint_id: "{{endpoint_id}}"
+        version: "{{version}}"
+    spec:
+      initContainers:
+      - name: download-model
+        image: busybox:1.35
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            echo "Downloading model {{endpoint_id}}/v{{version}} from broker..."
+            wget -O /shared/model.safetensors \
+              "http://model-broker-service:8003/stream-model/{{endpoint_id}}/{{version}}" || exit 1
+            echo "Model download complete"
+            ls -lh /shared/
+        volumeMounts:
+        - name: model-cache
+          mountPath: /shared
+      containers:
+      - name: slm-server
+        image: understudy-slm-inference:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "vllm.entrypoints.openai.api_server"]
+        args:
+          - --model=/models/model.safetensors
+          - --port=8000
+          - --host=0.0.0.0
+          - --trust-remote-code
+        ports:
+        - containerPort: 8000
+        env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: understudy-secrets
+              key: HF_TOKEN
+        - name: MODEL_PATH
+          value: /models/model.safetensors
+        - name: ENDPOINT_ID
+          value: "{{endpoint_id}}"
+        - name: MODEL_VERSION
+          value: "{{version}}"
+        - name: MODEL_BROKER_URL
+          value: "http://model-broker-service:8003"
+        volumeMounts:
+        - name: model-cache
+          mountPath: /models
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: model-cache
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: slm-{{endpoint_id}}-svc
+  namespace: understudy
+spec:
+  selector:
+    app: slm-inference
+    endpoint_id: "{{endpoint_id}}"
+  ports:
+  - port: 80
+    targetPort: 8000
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: slm-{{endpoint_id}}-hpa
+  namespace: understudy
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: slm-{{endpoint_id}}-v{{version}}
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
