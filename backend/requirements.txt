@@ -8,6 +8,12 @@ python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 
+# Kubernetes client
+kubernetes==28.1.0
+
+# Redis for async communication
+redis==5.0.1
+
 # LLM Providers - Updated compatible versions
 openai>=1.6.1
 anthropic>=0.7.0

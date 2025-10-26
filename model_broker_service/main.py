@@ -9,6 +9,7 @@ streaming model files to SLM inference pods on demand.
 
 import os
 import logging
+import shutil
 from pathlib import Path
 from typing import Optional
 import aiofiles
@@ -181,6 +182,57 @@ async def store_model(endpoint_id: str, version: str, file: UploadFile = File(..
         if model_path.exists():
             model_path.unlink()
         raise HTTPException(status_code=500, detail=f"Failed to store model: {str(e)}")
+
+
+@app.put("/store-model-directory/{endpoint_id}/{version}")
+async def store_model_directory(endpoint_id: str, version: str, files: list[UploadFile] = File(...)):
+    """Store a complete model directory with multiple files (called by training service)."""
+    model_dir = MODEL_STORAGE_PATH / endpoint_id / f"v{version}"
+    
+    # Create directory if it doesn't exist
+    model_dir.mkdir(parents=True, exist_ok=True)
+    
+    stored_files = []
+    total_size = 0
+    
+    try:
+        # Store each file in the model directory
+        for file in files:
+            if not file.filename:
+                continue
+                
+            file_path = model_dir / file.filename
+            
+            async with aiofiles.open(file_path, 'wb') as f:
+                while chunk := await file.read(CHUNK_SIZE):
+                    await f.write(chunk)
+            
+            file_size = file_path.stat().st_size
+            total_size += file_size
+            stored_files.append({
+                "filename": file.filename,
+                "size": file_size
+            })
+            
+            logger.info(f"Stored file {file.filename} ({file_size} bytes)")
+        
+        logger.info(f"Stored model directory {endpoint_id}/v{version} with {len(stored_files)} files ({total_size} bytes total)")
+        
+        return {
+            "message": "Model directory stored successfully",
+            "endpoint_id": endpoint_id,
+            "version": version,
+            "files": stored_files,
+            "total_size": total_size,
+            "path": str(model_dir)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error storing model directory {endpoint_id}/v{version}: {e}")
+        # Clean up partial files
+        if model_dir.exists():
+            shutil.rmtree(model_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"Failed to store model directory: {str(e)}")
 
 
 @app.delete("/delete-model/{endpoint_id}/{version}")

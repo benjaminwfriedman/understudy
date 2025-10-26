@@ -137,67 +137,91 @@ create_namespace() {
 
 # Function to apply base configurations
 apply_base_configs() {
-    echo -e "${YELLOW}Applying base configurations...${NC}"
+    echo -e "${YELLOW}Applying configurations with kustomization...${NC}"
     
-    # Apply secrets (local version with placeholder keys)
-    if [ -f "$K8S_DIR/local/secrets-local.yaml" ]; then
-        echo "Applying local secrets..."
-        kubectl apply -f "$K8S_DIR/local/secrets-local.yaml"
+    # Check if kustomization overlays exist
+    if [ -f "$K8S_DIR/overlays/local/kustomization.yaml" ]; then
+        echo "Using kustomization for optimized local deployment..."
+        kubectl apply -k "$K8S_DIR/overlays/local/"
     else
-        echo -e "${YELLOW}Warning: Using base secrets. Please update with your API keys!${NC}"
-        kubectl apply -f "$K8S_DIR/base/secrets.yaml"
+        # Fallback to individual file application
+        echo "No kustomization found, applying files individually..."
+        
+        # Apply secrets (local version with placeholder keys)
+        if [ -f "$K8S_DIR/local/secrets-local.yaml" ]; then
+            echo "Applying local secrets..."
+            kubectl apply -f "$K8S_DIR/local/secrets-local.yaml"
+        else
+            echo -e "${YELLOW}Warning: Using base secrets. Please update with your API keys!${NC}"
+            kubectl apply -f "$K8S_DIR/base/secrets.yaml"
+        fi
+        
+        # Apply other base configs
+        kubectl apply -f "$K8S_DIR/base/configmap.yaml"
+        kubectl apply -f "$K8S_DIR/base/rbac.yaml"
+        kubectl apply -f "$K8S_DIR/base/pvc.yaml"
     fi
     
-    # Apply other base configs
-    kubectl apply -f "$K8S_DIR/base/configmap.yaml"
-    kubectl apply -f "$K8S_DIR/base/rbac.yaml"
-    kubectl apply -f "$K8S_DIR/base/pvc.yaml"
-    
-    echo -e "${GREEN}✓ Base configurations applied${NC}"
+    echo -e "${GREEN}✓ Configurations applied${NC}"
 }
 
 # Function to deploy databases
 deploy_databases() {
-    echo -e "${YELLOW}Deploying databases...${NC}"
-    
-    kubectl apply -f "$K8S_DIR/base/postgres.yaml"
-    kubectl apply -f "$K8S_DIR/base/redis.yaml"
+    # Skip if using kustomization (already deployed)
+    if [ -f "$K8S_DIR/overlays/local/kustomization.yaml" ]; then
+        echo -e "${YELLOW}Waiting for databases to be ready (deployed via kustomization)...${NC}"
+    else
+        echo -e "${YELLOW}Deploying databases...${NC}"
+        kubectl apply -f "$K8S_DIR/base/postgres.yaml"
+        kubectl apply -f "$K8S_DIR/base/redis.yaml"
+    fi
     
     echo "Waiting for databases to be ready..."
     kubectl wait --for=condition=ready pod -l app=postgres -n understudy --timeout=120s || true
     kubectl wait --for=condition=ready pod -l app=redis -n understudy --timeout=120s || true
     
-    echo -e "${GREEN}✓ Databases deployed${NC}"
+    echo -e "${GREEN}✓ Databases ready${NC}"
 }
 
 # Function to deploy services
 deploy_services() {
-    echo -e "${YELLOW}Deploying application services...${NC}"
-    
-    # Deploy model broker first (other services depend on it)
-    kubectl apply -f "$K8S_DIR/base/model-broker.yaml"
-    
-    # Wait for model broker to be ready
-    echo "Waiting for model broker to be ready..."
-    kubectl wait --for=condition=ready pod -l app=model-broker -n understudy --timeout=120s || true
-    
-    # Deploy backend
-    kubectl apply -f "$K8S_DIR/base/backend.yaml"
-    
-    # Deploy evaluation service
-    kubectl apply -f "$K8S_DIR/base/evaluation-service.yaml"
-    
-    # Deploy training service
-    kubectl apply -f "$K8S_DIR/base/training-service.yaml"
-    
-    # Deploy frontend
-    kubectl apply -f "$K8S_DIR/base/frontend.yaml"
+    # Skip individual deployment if using kustomization
+    if [ -f "$K8S_DIR/overlays/local/kustomization.yaml" ]; then
+        echo -e "${YELLOW}Services deployed via kustomization with optimized resources:${NC}"
+        echo "  - Backend: 1 replica (250m CPU, 512Mi RAM)"
+        echo "  - Frontend: 1 replica"
+        echo "  - Evaluation: 1 replica (250m CPU, 768Mi RAM)"
+        echo "  - Training: 1 replica (200m CPU, 256Mi RAM)"
+        echo "  - Model Broker: 1 replica (250m CPU, 1Gi RAM)"
+    else
+        echo -e "${YELLOW}Deploying application services...${NC}"
+        
+        # Deploy model broker first (other services depend on it)
+        kubectl apply -f "$K8S_DIR/base/model-broker.yaml"
+        
+        # Wait for model broker to be ready
+        echo "Waiting for model broker to be ready..."
+        kubectl wait --for=condition=ready pod -l app=model-broker -n understudy --timeout=120s || true
+        
+        # Deploy backend
+        kubectl apply -f "$K8S_DIR/base/backend.yaml"
+        
+        # Deploy evaluation service
+        kubectl apply -f "$K8S_DIR/base/evaluation-service.yaml"
+        
+        # Deploy training service
+        kubectl apply -f "$K8S_DIR/base/training-service.yaml"
+        
+        # Deploy frontend
+        kubectl apply -f "$K8S_DIR/base/frontend.yaml"
+    fi
     
     echo "Waiting for services to be ready..."
     kubectl wait --for=condition=ready pod -l app=backend -n understudy --timeout=120s || true
     kubectl wait --for=condition=ready pod -l app=frontend -n understudy --timeout=120s || true
+    kubectl wait --for=condition=ready pod -l app=model-broker -n understudy --timeout=120s || true
     
-    echo -e "${GREEN}✓ Application services deployed${NC}"
+    echo -e "${GREEN}✓ Application services ready${NC}"
 }
 
 # Function to setup ingress
@@ -289,8 +313,17 @@ main() {
     echo -e "${BLUE}Starting deployment...${NC}"
     echo ""
     
-    create_namespace
-    apply_base_configs
+    # Check if using kustomization for single-step deployment
+    if [ -f "$K8S_DIR/overlays/local/kustomization.yaml" ]; then
+        echo -e "${BLUE}Using kustomization for optimized local deployment${NC}"
+        kubectl apply -k "$K8S_DIR/overlays/local/"
+        echo -e "${GREEN}✓ All resources deployed with kustomization${NC}"
+    else
+        # Traditional multi-step deployment
+        create_namespace
+        apply_base_configs
+    fi
+    
     deploy_databases
     
     # Wait a bit for databases to initialize

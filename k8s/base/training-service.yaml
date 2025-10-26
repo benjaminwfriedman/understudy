@@ -28,6 +28,22 @@ spec:
         app: training-service
     spec:
       serviceAccountName: training-service
+      initContainers:
+      - name: setup-ssh-keys
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+          - |
+            cp /tmp/ssh-keys/runpod_ssh_key /app/keys/runpod_ssh_key
+            chmod 400 /app/keys/runpod_ssh_key
+            chown 999:999 /app/keys/runpod_ssh_key
+            ls -la /app/keys/
+        volumeMounts:
+        - name: ssh-keys
+          mountPath: /tmp/ssh-keys
+          readOnly: true
+        - name: ssh-keys-writable
+          mountPath: /app/keys
       containers:
       - name: training-service
         image: bennyfriedman/understudy-training:latest
@@ -50,6 +66,13 @@ spec:
             secretKeyRef:
               name: understudy-secrets
               key: RUNPOD_API_KEY
+        - name: RUNPOD_SSH_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: understudy-secrets
+              key: RUNPOD_SSH_PUBLIC_KEY
+        - name: RUNPOD_SSH_PRIVATE_KEY_PATH
+          value: "/app/keys/runpod_ssh_key"
         - name: HF_TOKEN
           valueFrom:
             secretKeyRef:
@@ -69,6 +92,8 @@ spec:
           mountPath: /app/model_weights
         - name: training-data
           mountPath: /app/data
+        - name: ssh-keys-writable
+          mountPath: /app/keys
         livenessProbe:
           httpGet:
             path: /health
@@ -95,3 +120,12 @@ spec:
       - name: training-data
         persistentVolumeClaim:
           claimName: training-data-pvc
+      - name: ssh-keys
+        secret:
+          secretName: understudy-ssh-keys
+          defaultMode: 0600
+          items:
+          - key: RUNPOD_SSH_PRIVATE_KEY
+            path: runpod_ssh_key
+      - name: ssh-keys-writable
+        emptyDir: {}

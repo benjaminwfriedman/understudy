@@ -1,0 +1,12 @@
+# Configuration to limit SLM deployments for local development
+# This ensures we don't create more than 2 SLM inference pods at once
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: slm-deployment-config
+  namespace: understudy
+data:
+  max_slm_deployments: "2"
+  local_cpu_limit: "2"     # Limit each SLM pod to 2 CPUs
+  local_memory_limit: "4Gi" # Each SLM needs 4GB for model loading

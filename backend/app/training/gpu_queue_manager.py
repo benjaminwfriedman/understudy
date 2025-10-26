@@ -285,16 +285,10 @@ class GPUQueueManager:
             )
     
     async def _get_or_create_vm(self, provider: str = None) -> Optional[Dict[str, Any]]:
-        """Get an available VM or create a new one"""
-        if provider is None:
-            provider = self.default_provider
-        
-        if provider == "lambda":
-            return await self._get_or_create_lambda_instance()
-        elif provider == "runpod":
-            return await self._get_or_create_runpod_pod()
-        else:
-            return await self._get_or_create_azure_vm()
+        """Training service handles all VM management now"""
+        # All training is now handled by the training service
+        # No VM management needed in the backend
+        return {"provider": "training_service", "status": "available"}
     
     async def _get_or_create_azure_vm(self) -> Optional[Dict[str, Any]]:
         """Get an available Azure VM or create a new one"""
@@ -376,56 +370,11 @@ class GPUQueueManager:
             logger.error(f"Failed to check existing Lambda instances: {e}")
     
     async def _check_existing_runpod_pods(self):
-        """Check for existing RunPod pods on startup"""
+        """Check for existing RunPod pods on startup - now delegated to training service"""
         try:
-            if not hasattr(self, 'runpod_trainer') or not self.runpod_trainer:
-                from .runpod_trainer import RunPodTrainer
-                self.runpod_trainer = RunPodTrainer()
-            
-            pods = await self.runpod_trainer.get_existing_pods()
-            logger.info(f"Checking {len(pods)} existing RunPod pods for reuse eligibility")
-            
-            for pod in pods:
-                # Check if this is a pod we created (name starts with 'runpod-gpu-')
-                pod_name = pod.get('name', '')
-                if pod_name.startswith('runpod-gpu-') and pod.get('desiredStatus') == 'RUNNING':
-                    pod_id = pod['id']
-                    
-                    # Extract SSH info from runtime ports
-                    ssh_info = None
-                    if pod.get('runtime') and pod['runtime'].get('ports'):
-                        for port in pod['runtime']['ports']:
-                            if port.get('privatePort') == 22 and port.get('ip') and port.get('publicPort'):
-                                ssh_info = port
-                                break
-                    
-                    if ssh_info:
-                        # Create RunPodInstance object for compatibility
-                        from .runpod_trainer import RunPodInstance
-                        runpod_instance = RunPodInstance(
-                            id=pod_id,
-                            name=pod_name,
-                            ip_address=ssh_info['ip'],
-                            ssh_port=ssh_info['publicPort'],
-                            gpu_type=str(pod.get('gpuCount', 1)) + 'x GPU',
-                            status='running',
-                            pod_type='pod'
-                        )
-                        
-                        self.active_vms[pod_id] = {
-                            'vm_id': pod_id,
-                            'vm_name': pod_name,
-                            'status': 'idle',
-                            'created_at': datetime.utcnow(),
-                            'last_used': datetime.utcnow(),
-                            'provider': 'runpod',
-                            'pod': runpod_instance
-                        }
-                        logger.info(f"Found existing RunPod pod: {pod_name} ({pod_id})")
-            
-            if any(vm.get('provider') == 'runpod' for vm in self.active_vms.values()):
-                runpod_count = sum(1 for vm in self.active_vms.values() if vm.get('provider') == 'runpod')
-                logger.info(f"Discovered {runpod_count} existing RunPod pods available for reuse")
+            # Training service now manages RunPod pods directly
+            # We no longer need to check existing pods from the backend
+            logger.info("RunPod pod management is now handled by Training Service")
                 
         except Exception as e:
             logger.error(f"Failed to check existing RunPod pods: {e}")
@@ -652,68 +601,72 @@ class GPUQueueManager:
             job.started_at = datetime.utcnow()
             await self._update_job(job)
             
-            provider = vm.get('provider', 'azure')
-            vm_name = vm.get('vm_name') or vm.get('name', 'unknown')
-            logger.info(f"Starting training for job {job.job_id} on {provider} {vm_name}")
+            # All training is now handled by the training service
+            logger.info(f"Starting training for job {job.job_id} via Training Service")
             
-            if provider == 'lambda':
-                # Use Lambda Cloud trainer
-                if not self.lambda_trainer:
-                    from .lambda_cloud_trainer import LambdaCloudTrainer
-                    self.lambda_trainer = LambdaCloudTrainer()
+            # Use Training Service for all training
+            from app.core.training_client import get_training_client
+            training_client = get_training_client()
+            
+            # Extract training parameters from job
+            training_config = job.training_config or {}
+            
+            # Fetch training data from InferenceLog
+            training_data = None
+            try:
+                from app.models.models import InferenceLog
+                from app.models.database import AsyncSessionLocal
+                from sqlalchemy import select
                 
-                # Create LambdaInstance object for training
-                from .lambda_cloud_trainer import LambdaInstance
-                instance_data = vm['instance']
-                
-                # Handle both dictionary and LambdaInstance object
-                if isinstance(instance_data, LambdaInstance):
-                    lambda_instance = instance_data
-                else:
-                    # instance_data is a dictionary
-                    lambda_instance = LambdaInstance(
-                        id=instance_data['id'],
-                        name=instance_data['name'],
-                        ip_address=instance_data.get('ip', vm.get('ip')),
-                        instance_type=instance_data.get('instance_type', {}).get('name', 'unknown'),
-                        region=instance_data.get('region', {}).get('name', 'unknown'),
-                        status=instance_data.get('status', 'active'),
-                        ssh_key_names=instance_data.get('ssh_key_names', [])
-                )
-                
-                result = await self.lambda_trainer.execute_training(
-                    {'job_id': job.job_id, 'endpoint_id': job.endpoint_id, 'training_config': job.training_config},
-                    lambda_instance
-                )
-            elif provider == 'runpod':
-                # Use RunPod trainer
-                if not hasattr(self, 'runpod_trainer') or not self.runpod_trainer:
-                    from .runpod_trainer import RunPodTrainer
-                    self.runpod_trainer = RunPodTrainer()
-                
-                # Get RunPod instance from vm data
-                runpod_pod = vm['pod']
-                
-                result = await self.runpod_trainer.execute_training(
-                    {'job_id': job.job_id, 'endpoint_id': job.endpoint_id, 'training_config': job.training_config},
-                    runpod_pod
-                )
+                async with AsyncSessionLocal() as session:
+                    # Get training examples from inference logs
+                    query = select(InferenceLog).where(
+                        InferenceLog.endpoint_id == job.endpoint_id,
+                        InferenceLog.model_used == "llm",
+                        InferenceLog.llm_output.isnot(None)
+                    ).order_by(InferenceLog.created_at.desc())
+                    
+                    # Limit to requested number of training pairs
+                    num_examples = training_config.get('training_pairs_count', 100)
+                    query = query.limit(num_examples)
+                    
+                    result = await session.execute(query)
+                    logs = result.scalars().all()
+                    
+                    if logs:
+                        # Format training data with "text" field for training script compatibility
+                        training_data = []
+                        for log in logs:
+                            # Format with special tokens for instruction tuning (matching trainer.py format)
+                            formatted_text = f"<|user|>\n{log.input_text}\n<|assistant|>\n{log.llm_output}\n<|end|>"
+                            training_data.append({"text": formatted_text})
+                        logger.info(f"Fetched {len(training_data)} training examples for job {job.job_id}")
+                    else:
+                        logger.warning(f"No training data found for endpoint {job.endpoint_id}")
+                        
+            except Exception as e:
+                logger.error(f"Failed to fetch training data: {e}")
+                # Continue without training data - let training service handle it
+            
+            result = await training_client.start_training(
+                train_id=job.job_id,
+                endpoint_id=job.endpoint_id,
+                version=training_config.get('version', 1),
+                training_pairs_count=training_config.get('training_pairs_count', 100),
+                slm_type=training_config.get('slm_type', 'microsoft/DialoGPT-small'),
+                source_llm=training_config.get('source_llm', 'gpt-3.5-turbo'),
+                provider=job.provider,
+                training_data=training_data
+            )
+            
+            # Update job with results from training service
+            if result.get('success'):
+                job.status = JobStatus.TRAINING  # Will be updated by training service when complete
+                job.result = {'runpod_job_id': result.get('runpod_job_id'), 'message': result.get('message')}
             else:
-                # Use Azure trainer
-                if not self.azure_trainer:
-                    from .azure_gpu_trainer import AzureGPUTrainer
-                    self.azure_trainer = AzureGPUTrainer()
-                
-                result = await self.azure_trainer.execute_training(
-                    {'job_id': job.job_id, 'endpoint_id': job.endpoint_id, 'training_config': job.training_config},
-                    vm['details']
-                )
-            
-            # Update job with results
-            job.status = JobStatus.COMPLETED
-            job.completed_at = datetime.utcnow()
-            job.result = result
-            job.carbon_emissions = result.get('metrics', {}).get('carbon_emissions_kg')
+                job.status = JobStatus.FAILED
+                job.completed_at = datetime.utcnow()
+                job.error = result.get('error', 'Training service failed to start job')
             
             logger.info(f"Training completed for job {job.job_id}")
             

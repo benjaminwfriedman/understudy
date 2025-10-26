@@ -38,7 +38,7 @@ spec:
           mountPath: /shared
       containers:
       - name: slm-server
-        image: understudy-slm-inference:latest
+        image: bennyfriedman/understudy-slm-inference:latest
         imagePullPolicy: IfNotPresent
         command: ["python", "-m", "vllm.entrypoints.openai.api_server"]
         args:

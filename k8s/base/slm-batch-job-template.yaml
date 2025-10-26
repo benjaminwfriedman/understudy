@@ -35,7 +35,7 @@ spec:
           mountPath: /shared
       containers:
       - name: slm-inference
-        image: understudy-slm-inference:latest
+        image: bennyfriedman/understudy-slm-inference:latest
         imagePullPolicy: IfNotPresent
         env:
         - name: HF_TOKEN

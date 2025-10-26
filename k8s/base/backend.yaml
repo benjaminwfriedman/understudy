@@ -34,7 +34,7 @@ spec:
         command: ['sh', '-c', 'until nc -z postgres-service 5432; do echo waiting for postgres; sleep 2; done;']
       containers:
       - name: backend
-        image: bennyfriedman/understudy-backend:v2
+        image: bennyfriedman/understudy-backend:latest
         imagePullPolicy: Always
         ports:
         - containerPort: 8000

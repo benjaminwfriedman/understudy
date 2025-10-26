@@ -14,12 +14,34 @@ PROJECT_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
 
 # Parse arguments
 PUSH_TO_HUB=false
-if [[ "$1" == "--push" ]]; then
-    PUSH_TO_HUB=true
-fi
+REBUILD_NO_CACHE=false
+
+for arg in "$@"; do
+    case $arg in
+        --push)
+            PUSH_TO_HUB=true
+            ;;
+        --rebuild)
+            REBUILD_NO_CACHE=true
+            ;;
+        *)
+            echo "Unknown argument: $arg"
+            echo "Usage: $0 [--push] [--rebuild]"
+            echo "  --push    Push images to Docker Hub"
+            echo "  --rebuild Force rebuild with no cache"
+            exit 1
+            ;;
+    esac
+done
 
 echo "Building Understudy Docker images for Kubernetes deployment..."
 echo "Project root: $PROJECT_ROOT"
+if [ "$REBUILD_NO_CACHE" = true ]; then
+    echo "Building with --no-cache flag for complete rebuild"
+    BUILD_ARGS="--no-cache"
+else
+    BUILD_ARGS=""
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -29,7 +51,7 @@ NC='\033[0m' # No Color
 
 # Build backend image
 echo -e "${YELLOW}Building backend image...${NC}"
-docker build -t understudy-backend:latest "$PROJECT_ROOT/backend" || {
+docker build $BUILD_ARGS -t understudy-backend:latest "$PROJECT_ROOT/backend" || {
     echo -e "${RED}Failed to build backend image${NC}"
     exit 1
 }
@@ -37,7 +59,7 @@ echo -e "${GREEN}✓ Backend image built successfully${NC}"
 
 # Build frontend image
 echo -e "${YELLOW}Building frontend image...${NC}"
-docker build -t understudy-frontend:latest "$PROJECT_ROOT/frontend" || {
+docker build $BUILD_ARGS -t understudy-frontend:latest "$PROJECT_ROOT/frontend" || {
     echo -e "${RED}Failed to build frontend image${NC}"
     exit 1
 }
@@ -46,7 +68,7 @@ echo -e "${GREEN}✓ Frontend image built successfully${NC}"
 # Build evaluation service image
 echo -e "${YELLOW}Building evaluation service image...${NC}"
 if [ -d "$PROJECT_ROOT/evaluation_service" ]; then
-    docker build -t understudy-evaluation:latest "$PROJECT_ROOT/evaluation_service" || {
+    docker build $BUILD_ARGS -t understudy-evaluation:latest "$PROJECT_ROOT/evaluation_service" || {
         echo -e "${RED}Failed to build evaluation service image${NC}"
         exit 1
     }
@@ -77,26 +99,26 @@ async def evaluate(data: dict):
     # Placeholder for evaluation logic
     return {"semantic_similarity_score": 0.85}
 EOF
-    docker build -t understudy-evaluation:latest "$PROJECT_ROOT/evaluation_service"
+    docker build $BUILD_ARGS -t understudy-evaluation:latest "$PROJECT_ROOT/evaluation_service"
     echo -e "${GREEN}✓ Evaluation service placeholder image built${NC}"
 fi
 
 # Build training service image
 echo -e "${YELLOW}Building training service image...${NC}"
-if [ -d "$PROJECT_ROOT/docker/training" ]; then
-    docker build -t understudy-training:latest "$PROJECT_ROOT/docker/training" || {
+if [ -d "$PROJECT_ROOT/training_service" ]; then
+    docker build $BUILD_ARGS -t understudy-training:latest "$PROJECT_ROOT/training_service" || {
         echo -e "${RED}Failed to build training service image${NC}"
         exit 1
     }
     echo -e "${GREEN}✓ Training service image built successfully${NC}"
 else
-    echo -e "${YELLOW}Warning: docker/training directory found but may need updates${NC}"
-    docker build -t understudy-training:latest "$PROJECT_ROOT/docker/training"
+    echo -e "${YELLOW}Warning: training_service directory not found${NC}"
+    exit 1
 fi
 
 # Build model broker service image
 echo -e "${YELLOW}Building model broker service image...${NC}"
-docker build -t understudy-model-broker:latest "$PROJECT_ROOT/model_broker_service" || {
+docker build $BUILD_ARGS -t understudy-model-broker:latest "$PROJECT_ROOT/model_broker_service" || {
     echo -e "${RED}Failed to build model broker service image${NC}"
     exit 1
 }
@@ -105,7 +127,7 @@ echo -e "${GREEN}✓ Model broker service image built successfully${NC}"
 # Build SLM inference service image
 echo -e "${YELLOW}Building SLM inference service image...${NC}"
 if [ -d "$PROJECT_ROOT/slm_inference_service" ]; then
-    docker build -t understudy-slm-inference:latest "$PROJECT_ROOT/slm_inference_service" || {
+    docker build $BUILD_ARGS -t understudy-slm-inference:latest "$PROJECT_ROOT/slm_inference_service" || {
         echo -e "${RED}Failed to build SLM inference service image${NC}"
         exit 1
     }
@@ -120,7 +142,7 @@ RUN pip install torch transformers vllm fastapi uvicorn
 COPY . .
 CMD ["python", "-m", "vllm.entrypoints.openai.api_server", "--host", "0.0.0.0", "--port", "8000"]
 EOF
-    docker build -t understudy-slm-inference:latest "$PROJECT_ROOT/slm_inference_service"
+    docker build $BUILD_ARGS -t understudy-slm-inference:latest "$PROJECT_ROOT/slm_inference_service"
     echo -e "${GREEN}✓ SLM inference placeholder image built${NC}"
 fi
 

@@ -31,6 +31,12 @@ async def lifespan(app: FastAPI):
     # Initialize cloud GPU training if enabled
     await _initialize_cloud_training()
     
+    # Initialize model lifecycle manager
+    from app.core.model_lifecycle import get_lifecycle_manager
+    lifecycle_manager = get_lifecycle_manager()
+    await lifecycle_manager.initialize()
+    logger.info("Model lifecycle manager initialized")
+    
     yield
     
     # Shutdown
@@ -151,6 +157,10 @@ app.add_middleware(
 
 # Include routers
 app.include_router(router)
+
+# Include lifecycle management endpoints
+from app.api.lifecycle_endpoints import router as lifecycle_router
+app.include_router(lifecycle_router)
 
 # Include Lambda Cloud endpoints if enabled
 import os
