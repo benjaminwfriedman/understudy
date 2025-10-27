@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, ForeignKey, Text, JSON
+from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, ForeignKey, Text, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.models.database import Base
@@ -51,17 +51,54 @@ class InferenceLog(Base):
 
 class TrainingRun(Base):
     __tablename__ = "training_runs"
+    __table_args__ = (
+        # Composite unique constraint on (endpoint_id, version) to ensure proper versioning per endpoint
+        UniqueConstraint('endpoint_id', 'version', name='uq_training_runs_endpoint_version'),
+    )
     
-    id = Column(String, primary_key=True, default=generate_uuid)
+    # Primary key - unique identifier for the training run
+    train_id = Column(String, primary_key=True, default=generate_uuid)
+    
+    # Basic training info
     endpoint_id = Column(String, ForeignKey("endpoints.id"), nullable=False)
-    start_time = Column(DateTime, nullable=False, server_default=func.now())
-    end_time = Column(DateTime)
-    examples_used = Column(Integer)
-    final_loss = Column(Float)
-    status = Column(String, nullable=False, default="running")  # 'running', 'completed', 'failed'
+    version = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    
+    # Model configuration
+    slm_type = Column(String, nullable=False)  # e.g., "Llama 3.2 1B"
+    source_llm = Column(String, nullable=False)  # e.g., "gpt-3.5-turbo"
+    training_pairs_count = Column(Integer, nullable=False)
+    
+    # Training results
+    training_loss = Column(Float)  # Final fine-tuning loss value
+    
+    # Evaluation results
+    semantic_similarity_score = Column(Float)  # Similarity score to source LLM
+    
+    # Lifecycle management
+    phase = Column(String, nullable=False, default="training")  # training, downloading, llm_evaluation, available, deploying, deployed, failed
+    
+    # Storage and deployment
+    model_weights_path = Column(String)  # Path in model broker
+    k8s_deployment_name = Column(String)  # Name of K8s deployment if deployed
+    inference_mode = Column(String)  # 'endpoint' or 'batch' or null
+    
+    # Soft delete
+    is_deleted = Column(Boolean, default=False, nullable=False)
+    
+    # Carbon tracking (keeping these as requested)
     carbon_emissions_kg = Column(Float)  # From CodeCarbon
     energy_consumed_kwh = Column(Float)  # From CodeCarbon
+    
+    # Legacy/compatibility fields (optional - can be removed after migration)
+    start_time = Column(DateTime)  # Maps to created_at
+    end_time = Column(DateTime)
+    examples_used = Column(Integer)  # Maps to training_pairs_count
+    final_loss = Column(Float)  # Maps to training_loss
     error_message = Column(Text)
+    
+    # For legacy compatibility - keeping the id field as well initially
+    id = Column(String, default=generate_uuid)  # Can be removed after migration
     
     # Relationships
     endpoint = relationship("Endpoint", back_populates="training_runs")

@@ -460,8 +460,8 @@ async def execute_training_job(train_id: str, endpoint_id: str, version: int, po
                 # Notify backend of completion
                 async with httpx.AsyncClient() as client:
                     await client.post(
-                        f"{BACKEND_URL}/api/v1/training/{train_id}/complete",
-                        json={"phase": "completed"}
+                        f"{BACKEND_URL}/api/v1/lifecycle/training/{train_id}/complete",
+                        json={"phase": "available"}
                     )
                 
                 await redis_client.hset(f"training:{train_id}", "status", "completed")

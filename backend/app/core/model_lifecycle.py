@@ -57,12 +57,31 @@ class ModelLifecycleManager:
         version: int,
         training_pairs_count: int,
         slm_type: str,
-        source_llm: str
+        source_llm: str,
+        training_data: Optional[List[Dict[str, str]]] = None
     ) -> Dict[str, Any]:
         """Start a new training job and set phase to 'training'."""
         try:
-            # Update database phase
-            await self._update_phase(db, train_id, "training")
+            # Create training record in database
+            from app.models.models import TrainingRun
+            
+            training_record = TrainingRun(
+                train_id=train_id,
+                endpoint_id=endpoint_id,
+                version=version,
+                training_pairs_count=training_pairs_count,
+                slm_type=slm_type,
+                source_llm=source_llm,
+                phase="training",
+                is_deleted=False,
+                start_time=datetime.now(),
+                examples_used=training_pairs_count  # Legacy field that maps to training_pairs_count
+            )
+            
+            db.add(training_record)
+            await db.commit()
+            
+            logger.info(f"Created training record for {train_id} with phase: training")
             
             # Send request to Training Service
             async with httpx.AsyncClient() as client:
@@ -74,7 +93,8 @@ class ModelLifecycleManager:
                         "version": version,
                         "training_pairs_count": training_pairs_count,
                         "slm_type": slm_type,
-                        "source_llm": source_llm
+                        "source_llm": source_llm,
+                        "training_data": training_data
                     }
                 )
                 
@@ -311,7 +331,7 @@ class ModelLifecycleManager:
                 train_id=train_id,
                 endpoint_id=model.endpoint_id,
                 version=model.version,
-                model_path=f"/models/{model.endpoint_id}/v{model.version}",
+                model_path=f"{model.endpoint_id}/v{model.version}",
                 evaluation_batch_id=f"eval_{train_id}"
             )
             
@@ -345,7 +365,7 @@ class ModelLifecycleManager:
             deployment = self.k8s_manager.create_slm_deployment(
                 endpoint_id=model.endpoint_id,
                 version=model.version,
-                model_path=f"/models/{model.endpoint_id}/v{model.version}"
+                model_path=f"{model.endpoint_id}/v{model.version}"
             )
             
             # Update database

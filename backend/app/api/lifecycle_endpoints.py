@@ -190,6 +190,62 @@ async def list_endpoint_models(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/models")
+async def list_all_models(
+    db: AsyncSession = Depends(get_db),
+    phase: str = None,
+    endpoint_id: str = None
+):
+    """
+    List all models with optional filtering by phase or endpoint.
+    """
+    try:
+        from sqlalchemy import select
+        from app.models.models import TrainingRun
+        
+        # Build query with optional filters
+        stmt = select(TrainingRun).where(TrainingRun.is_deleted == False)
+        
+        if phase:
+            stmt = stmt.where(TrainingRun.phase == phase)
+        if endpoint_id:
+            stmt = stmt.where(TrainingRun.endpoint_id == endpoint_id)
+            
+        stmt = stmt.order_by(TrainingRun.created_at.desc())
+        
+        result = await db.execute(stmt)
+        models = result.scalars().all()
+        
+        model_list = []
+        for model in models:
+            model_info = {
+                "train_id": model.train_id,
+                "endpoint_id": model.endpoint_id,
+                "version": model.version,
+                "phase": model.phase,
+                "similarity_score": model.semantic_similarity_score,
+                "created_at": model.created_at.isoformat() if model.created_at else None,
+                "slm_type": model.slm_type,
+                "source_llm": model.source_llm,
+                "is_deployed": model.phase == "deployed",
+                "k8s_deployment_name": model.k8s_deployment_name
+            }
+            model_list.append(model_info)
+        
+        return {
+            "models": model_list,
+            "total_count": len(model_list),
+            "filters": {
+                "phase": phase,
+                "endpoint_id": endpoint_id
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listing models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/k8s/deployments")
 async def list_k8s_deployments():
     """

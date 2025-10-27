@@ -16,6 +16,8 @@ import redis.asyncio as redis
 from dataclasses import dataclass, asdict
 import pickle
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -604,9 +606,9 @@ class GPUQueueManager:
             # All training is now handled by the training service
             logger.info(f"Starting training for job {job.job_id} via Training Service")
             
-            # Use Training Service for all training
-            from app.core.training_client import get_training_client
-            training_client = get_training_client()
+            # Use Lifecycle Manager for all training (proper flow)
+            from app.core.model_lifecycle import get_lifecycle_manager
+            lifecycle_manager = get_lifecycle_manager()
             
             # Extract training parameters from job
             training_config = job.training_config or {}
@@ -648,16 +650,19 @@ class GPUQueueManager:
                 logger.error(f"Failed to fetch training data: {e}")
                 # Continue without training data - let training service handle it
             
-            result = await training_client.start_training(
-                train_id=job.job_id,
-                endpoint_id=job.endpoint_id,
-                version=training_config.get('version', 1),
-                training_pairs_count=training_config.get('training_pairs_count', 100),
-                slm_type=training_config.get('slm_type', 'microsoft/DialoGPT-small'),
-                source_llm=training_config.get('source_llm', 'gpt-3.5-turbo'),
-                provider=job.provider,
-                training_data=training_data
-            )
+            # Initialize database session for lifecycle manager
+            from app.models.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as db:
+                result = await lifecycle_manager.start_training(
+                    db=db,
+                    train_id=job.job_id,
+                    endpoint_id=job.endpoint_id,
+                    version=training_config.get('version', 1),
+                    training_pairs_count=training_config.get('training_pairs_count', 100),
+                    slm_type=training_config.get('slm_type', settings.BASE_MODEL_PATH),
+                    source_llm=training_config.get('source_llm', 'gpt-3.5-turbo'),
+                    training_data=training_data
+                )
             
             # Update job with results from training service
             if result.get('success'):
