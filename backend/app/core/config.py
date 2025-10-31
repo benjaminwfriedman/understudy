@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     CHECKPOINTS_DIR: str = "./checkpoints"
     
     # Training
-    DEFAULT_BATCH_SIZE: int = 100
+    DEFAULT_TRAINING_SIZES: List = [10, 100, 1000]
     DEFAULT_LEARNING_RATE: float = 3e-4
     DEFAULT_NUM_EPOCHS: int = 3
     DEFAULT_LORA_R: int = 8

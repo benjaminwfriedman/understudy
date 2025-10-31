@@ -52,8 +52,8 @@ async def startup_event():
 
 
 def get_model_path(endpoint_id: str, version: str) -> Path:
-    """Get the file system path for a model."""
-    return MODEL_STORAGE_PATH / endpoint_id / f"v{version}" / "model.safetensors"
+    """Get the file system path for a model directory."""
+    return MODEL_STORAGE_PATH / endpoint_id / f"v{version}"
 
 
 def get_model_metadata_path(endpoint_id: str, version: str) -> Path:
@@ -126,29 +126,129 @@ async def model_exists(endpoint_id: str, version: str):
     )
 
 
+@app.get("/model-info/{endpoint_id}/{version}")
+async def get_model_info(endpoint_id: str, version: str):
+    """Get model information and structure."""
+    model_dir = get_model_path(endpoint_id, version)
+    
+    if not model_dir.exists():
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    # Check if it's a LoRA adapter
+    adapter_config_path = model_dir / "adapter_config.json"
+    is_lora_adapter = adapter_config_path.exists()
+    
+    files = []
+    total_size = 0
+    
+    for file_path in model_dir.iterdir():
+        if file_path.is_file():
+            file_size = file_path.stat().st_size
+            files.append({
+                "filename": file_path.name,
+                "size": file_size
+            })
+            total_size += file_size
+    
+    result = {
+        "endpoint_id": endpoint_id,
+        "version": version,
+        "is_lora_adapter": is_lora_adapter,
+        "files": files,
+        "total_size": total_size
+    }
+    
+    # If it's a LoRA adapter, include base model info
+    if is_lora_adapter:
+        try:
+            import json
+            with open(adapter_config_path, 'r') as f:
+                adapter_config = json.load(f)
+            result["base_model"] = adapter_config.get("base_model_name_or_path")
+            result["adapter_config"] = adapter_config
+        except Exception as e:
+            logger.warning(f"Could not read adapter config: {e}")
+    
+    return result
+
+
 @app.get("/stream-model/{endpoint_id}/{version}")
 async def stream_model(endpoint_id: str, version: str):
     """Stream model weights to requesting pod."""
-    model_path = get_model_path(endpoint_id, version)
+    model_dir = get_model_path(endpoint_id, version)
     
-    if not model_path.exists():
-        logger.error(f"Model not found: {model_path}")
+    if not model_dir.exists():
+        logger.error(f"Model not found: {model_dir}")
         raise HTTPException(status_code=404, detail=f"Model {endpoint_id}/v{version} not found")
     
-    file_size = model_path.stat().st_size
-    logger.info(f"Streaming model {endpoint_id}/v{version} ({file_size} bytes) to client")
+    # Check if it's a LoRA adapter
+    adapter_config_path = model_dir / "adapter_config.json"
+    is_lora_adapter = adapter_config_path.exists()
     
-    return StreamingResponse(
-        stream_file(model_path),
-        media_type="application/octet-stream",
-        headers={
-            "Content-Length": str(file_size),
-            "Content-Disposition": f"attachment; filename=model-{endpoint_id}-v{version}.safetensors",
-            "X-Model-Size": str(file_size),
-            "X-Endpoint-ID": endpoint_id,
-            "X-Model-Version": version
-        }
-    )
+    if is_lora_adapter:
+        # For LoRA adapters, create a tar archive with all files
+        import tarfile
+        import tempfile
+        import shutil
+        
+        logger.info(f"Streaming LoRA adapter {endpoint_id}/v{version} as tar archive")
+        
+        # Create temporary tar file
+        with tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False) as tmp_tar:
+            with tarfile.open(tmp_tar.name, 'w:gz') as tar:
+                for file_path in model_dir.iterdir():
+                    if file_path.is_file():
+                        tar.add(file_path, arcname=file_path.name)
+            
+            # Get file size
+            tar_size = Path(tmp_tar.name).stat().st_size
+            
+            def cleanup_and_stream():
+                try:
+                    with open(tmp_tar.name, 'rb') as f:
+                        while chunk := f.read(8192):
+                            yield chunk
+                finally:
+                    # Clean up temp file
+                    try:
+                        Path(tmp_tar.name).unlink()
+                    except:
+                        pass
+            
+            return StreamingResponse(
+                cleanup_and_stream(),
+                media_type="application/gzip",
+                headers={
+                    "Content-Length": str(tar_size),
+                    "Content-Disposition": f"attachment; filename=lora-adapter-{endpoint_id}-v{version}.tar.gz",
+                    "X-Model-Type": "lora_adapter",
+                    "X-Endpoint-ID": endpoint_id,
+                    "X-Model-Version": version
+                }
+            )
+    else:
+        # For regular models, stream the single model file
+        model_file = model_dir / "model.safetensors"
+        if not model_file.exists():
+            # Try pytorch_model.bin
+            model_file = model_dir / "pytorch_model.bin"
+            if not model_file.exists():
+                raise HTTPException(status_code=404, detail="Model weights file not found")
+        
+        file_size = model_file.stat().st_size
+        logger.info(f"Streaming model {endpoint_id}/v{version} ({file_size} bytes) to client")
+        
+        return StreamingResponse(
+            stream_file(model_file),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Length": str(file_size),
+                "Content-Disposition": f"attachment; filename=model-{endpoint_id}-v{version}.safetensors",
+                "X-Model-Size": str(file_size),
+                "X-Endpoint-ID": endpoint_id,
+                "X-Model-Version": version
+            }
+        )
 
 
 @app.put("/store-model/{endpoint_id}/{version}")

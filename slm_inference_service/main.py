@@ -15,27 +15,33 @@ import json
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import httpx
+import redis.asyncio as redis
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from peft import PeftModel
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    force=True
 )
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # Environment configuration
 MODEL_PATH = os.getenv("MODEL_PATH", "/models")
 ENDPOINT_ID = os.getenv("ENDPOINT_ID")
 VERSION = os.getenv("VERSION")
 EVAL_BATCH_ID = os.getenv("EVAL_BATCH_ID")
+TRAIN_ID = os.getenv("TRAIN_ID")
 MODE = os.getenv("MODE", "endpoint")  # "endpoint" or "batch"
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend-service:8000")
 MODEL_BROKER_URL = os.getenv("MODEL_BROKER_URL", "http://model-broker-service:8003")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Global model and tokenizer
 model = None
@@ -93,15 +99,56 @@ async def load_model():
         
         logger.info(f"Loading model from: {model_path}")
         
-        # Load tokenizer and model
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-            device_map="auto" if torch.cuda.is_available() else None
-        )
+        # Check if this is a LoRA adapter by looking for adapter_config.json
+        adapter_config_path = f"{model_path}/adapter_config.json"
+        is_lora_adapter = os.path.exists(adapter_config_path)
         
-        logger.info("Model loaded successfully")
+        if is_lora_adapter:
+            logger.info("Detected LoRA adapter, loading base model + adapter")
+            
+            # Read adapter config to get base model
+            with open(adapter_config_path, 'r') as f:
+                adapter_config = json.load(f)
+            
+            base_model_name = adapter_config.get("base_model_name_or_path")
+            if not base_model_name:
+                raise Exception("LoRA adapter config missing base_model_name_or_path")
+            
+            logger.info(f"Loading base model: {base_model_name}")
+            
+            # Load base model and tokenizer
+            tokenizer = AutoTokenizer.from_pretrained(
+                base_model_name,
+                token=HF_TOKEN if HF_TOKEN else None
+            )
+            base_model = AutoModelForCausalLM.from_pretrained(
+                base_model_name,
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                device_map="auto" if torch.cuda.is_available() else None,
+                token=HF_TOKEN if HF_TOKEN else None
+            )
+            
+            # Load LoRA adapter
+            logger.info(f"Loading LoRA adapter from: {model_path}")
+            model = PeftModel.from_pretrained(base_model, model_path)
+            
+            # Ensure pad token is set
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
+            logger.info("LoRA model loaded successfully")
+            
+        else:
+            logger.info("Loading full model")
+            # Load tokenizer and model normally
+            tokenizer = AutoTokenizer.from_pretrained(model_path)
+            model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                device_map="auto" if torch.cuda.is_available() else None
+            )
+            logger.info("Full model loaded successfully")
+        
         return True
         
     except Exception as e:
@@ -114,10 +161,26 @@ async def download_model_from_broker() -> Optional[str]:
     try:
         # Check if model exists locally
         local_path = f"{MODEL_PATH}/{ENDPOINT_ID}/v{VERSION}"
-        model_file = f"{local_path}/model.safetensors"
         
-        if os.path.exists(model_file):
-            logger.info(f"Model already exists locally: {model_file}")
+        # Check for LoRA adapter files
+        lora_files = ["adapter_config.json", "adapter_model.safetensors"]
+        is_lora = all(os.path.exists(f"{local_path}/{file}") for file in lora_files)
+        
+        # Check for common Hugging Face model files
+        required_files = ["config.json", "pytorch_model.bin"]
+        model_exists = all(os.path.exists(f"{local_path}/{file}") for file in required_files)
+        
+        # Also check for safetensors format
+        if not model_exists:
+            safetensors_files = ["config.json", "model.safetensors"]
+            model_exists = all(os.path.exists(f"{local_path}/{file}") for file in safetensors_files)
+        
+        # For LoRA adapters, we only need the adapter files
+        if is_lora:
+            model_exists = True
+        
+        if model_exists:
+            logger.info(f"Model already exists locally: {local_path}")
             return local_path
         
         # Download from Model Broker
@@ -126,18 +189,83 @@ async def download_model_from_broker() -> Optional[str]:
         os.makedirs(local_path, exist_ok=True)
         
         async with httpx.AsyncClient() as client:
+            # First try to get model info/metadata
+            try:
+                info_response = await client.get(f"{MODEL_BROKER_URL}/model-info/{ENDPOINT_ID}/{VERSION}")
+                if info_response.status_code == 200:
+                    model_info = info_response.json()
+                    logger.info(f"Model info: {model_info}")
+            except Exception as e:
+                logger.warning(f"Could not get model info: {e}")
+            
+            # Download the model
             response = await client.get(
                 f"{MODEL_BROKER_URL}/stream-model/{ENDPOINT_ID}/{VERSION}",
                 timeout=300.0  # 5 minute timeout
             )
             
             if response.status_code == 200:
-                with open(model_file, "wb") as f:
-                    async for chunk in response.aiter_bytes():
-                        f.write(chunk)
+                # Check if it's a LoRA adapter (tar.gz) or regular model
+                content_type = response.headers.get("content-type", "")
+                model_type = response.headers.get("X-Model-Type", "")
                 
-                logger.info(f"Model downloaded successfully to {model_file}")
-                return local_path
+                if model_type == "lora_adapter" or content_type == "application/gzip":
+                    # Handle LoRA adapter tar.gz
+                    logger.info("Downloading LoRA adapter archive")
+                    import tarfile
+                    import tempfile
+                    
+                    # Download to temp file
+                    with tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False) as tmp_file:
+                        async for chunk in response.aiter_bytes():
+                            tmp_file.write(chunk)
+                        tmp_file_path = tmp_file.name
+                    
+                    try:
+                        # Extract tar.gz to model directory
+                        with tarfile.open(tmp_file_path, 'r:gz') as tar:
+                            tar.extractall(local_path)
+                        
+                        logger.info(f"LoRA adapter extracted to {local_path}")
+                        
+                        # Verify we have the expected files
+                        adapter_config_path = f"{local_path}/adapter_config.json"
+                        adapter_model_path = f"{local_path}/adapter_model.safetensors"
+                        
+                        if not os.path.exists(adapter_config_path) or not os.path.exists(adapter_model_path):
+                            raise Exception("Downloaded LoRA adapter missing required files")
+                        
+                        return local_path
+                        
+                    finally:
+                        # Clean up temp file
+                        try:
+                            os.unlink(tmp_file_path)
+                        except:
+                            pass
+                            
+                else:
+                    # Handle regular model file
+                    model_file = f"{local_path}/model.safetensors"
+                    with open(model_file, "wb") as f:
+                        async for chunk in response.aiter_bytes():
+                            f.write(chunk)
+                    
+                    logger.info(f"Model weights downloaded to {model_file}")
+                    
+                    # Create a minimal config.json for the model
+                    config = {
+                        "architectures": ["LlamaForCausalLM"],
+                        "model_type": "llama",
+                        "torch_dtype": "float16",
+                        "transformers_version": "4.35.2"
+                    }
+                    
+                    with open(f"{local_path}/config.json", "w") as f:
+                        json.dump(config, f, indent=2)
+                    
+                    logger.info(f"Model setup completed at {local_path}")
+                    return local_path
             else:
                 logger.error(f"Failed to download model: {response.status_code}")
                 return None
@@ -200,36 +328,49 @@ async def startup_event():
         logger.error("Failed to load model during startup")
         raise RuntimeError("Model loading failed")
     
-    # If in batch mode, start processing immediately
-    if MODE == "batch" and EVAL_BATCH_ID:
-        asyncio.create_task(process_evaluation_batch())
+    # In web server mode, just load the model and be ready for requests
+    # Batch mode is handled directly in __main__
 
 
 async def process_evaluation_batch():
     """Process evaluation batch in batch mode."""
     try:
         logger.info(f"Processing evaluation batch: {EVAL_BATCH_ID}")
+
+        logger.info(f"TRAIN_ID: ")
         
-        # Get evaluation prompts from backend
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{BACKEND_URL}/api/v1/evaluation/{EVAL_BATCH_ID}/prompts"
-            )
-            
-            if response.status_code != 200:
-                logger.error(f"Failed to get evaluation prompts: {response.status_code}")
-                return
-            
-            data = response.json()
-            prompts = data["prompts"]
-            train_id = data["train_id"]
+        # Connect to Redis to get evaluation context
+        logger.info(f"Connecting to REDIS: redis://redis-service:6379")
+        redis_url = os.environ.get("REDIS_URL", "redis://redis-service:6379")
+        redis_client = await redis.from_url(redis_url)
+        logger.info(f"CONNECTED")
+        # Get evaluation context from Redis
+        # The evaluation_batch_id passed from backend is just the train_id
+        logger.info(f"Using TRAIN_ID as train_id: {TRAIN_ID}")
+        train_id = TRAIN_ID
         
-        logger.info(f"Processing {len(prompts)} evaluation prompts")
+        eval_context_key = f"evaluation_context:{train_id}"
+        eval_context_data = await redis_client.get(eval_context_key)
+        
+        if not eval_context_data:
+            logger.error(f"No evaluation context found in Redis for key: {eval_context_key}")
+            return
+            
+        # Parse the evaluation context
+        logger.info(f"Parsing Eval Data")
+        eval_context = eval(eval_context_data.decode())  # Using eval since it was stored with str()
+        evaluation_inputs = eval_context.get("evaluation_inputs", [])
+        llm_outputs = eval_context.get("llm_outputs")
+
+        
+        logger.info(f"Retrieved {len(evaluation_inputs)} evaluation inputs from Redis for evaluation")
+        
+        logger.info(f"Processing {len(evaluation_inputs)} evaluation prompts")
         
         # Generate responses for all prompts
         results = []
-        for i, prompt in enumerate(prompts):
-            logger.info(f"Processing prompt {i+1}/{len(prompts)}")
+        for i, prompt in enumerate(evaluation_inputs):
+            logger.info(f"Processing prompt {i+1}/{len(evaluation_inputs)}")
             
             result = await generate_text(prompt, max_tokens=150, temperature=0.7)
             results.append({
@@ -239,6 +380,7 @@ async def process_evaluation_batch():
             })
         
         # Send results back to backend
+        logger.info(f"POSTING RESULTS TO: {BACKEND_URL}/api/v1/evaluation/{EVAL_BATCH_ID}/results")
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{BACKEND_URL}/api/v1/evaluation/{EVAL_BATCH_ID}/results",
@@ -254,10 +396,15 @@ async def process_evaluation_batch():
             else:
                 logger.error(f"Failed to send results: {response.status_code}")
         
+        # Close Redis connection
+        await redis_client.close()
+        
         logger.info("Batch evaluation completed")
         
     except Exception as e:
+        import traceback
         logger.error(f"Error in batch evaluation: {e}")
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
 
 
 @app.get("/")
@@ -360,12 +507,39 @@ async def model_info():
     }
 
 
+async def run_batch_evaluation():
+    """Run batch evaluation directly."""
+    global model, tokenizer
+    
+    logger.info("Loading model for batch evaluation...")
+    success = await load_model()
+    if not success:
+        logger.error("Failed to load model for batch evaluation")
+        return
+    
+    # Run the actual evaluation
+    await process_evaluation_batch()
+
+
+# Debug: Always log this regardless of context
+print(f"PRINT DEBUG: At module level: MODE={MODE}, __name__={__name__}")
+logger.info(f"At module level: MODE={MODE}, __name__={__name__}")
+
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=False,
-        log_level="info"
-    )
+    print(f"PRINT DEBUG: Inside __main__ block with MODE={MODE}")
+    logger.info(f"Inside __main__ block with MODE={MODE}")
+    if MODE == "batch":
+        print("PRINT DEBUG: Running in batch mode - starting evaluation directly")
+        logger.info("Running in batch mode - starting evaluation directly")
+        asyncio.run(run_batch_evaluation())
+    else:
+        print("PRINT DEBUG: Running in server mode - starting FastAPI")
+        logger.info("Running in server mode - starting FastAPI")
+        import uvicorn
+        uvicorn.run(
+            "main:app",
+            host="0.0.0.0",
+            port=8000,
+            reload=False,
+            log_level="info"
+        )

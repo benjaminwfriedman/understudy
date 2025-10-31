@@ -28,7 +28,24 @@ logger = logging.getLogger(__name__)
 
 
 class ModelLifecycleManager:
-    """Manages model lifecycle phases and transitions."""
+    """
+    Manages model lifecycle phases and transitions.
+    
+    TODO: Implement drift detection workflow for deployed SLMs:
+    - When SLM is deployed and serving traffic (phase='deployed')
+    - Every N SLM inferences (configurable via DRIFT_CHECK_INTERVAL, e.g., 100)
+    - Sample the last N SLM inference inputs and run them through the source LLM
+    - Compare LLM vs SLM outputs using evaluation service
+    - If similarity drops below DRIFT_THRESHOLD (e.g., 0.75):
+      * Alert/log drift detection
+      * Optionally auto-retrain or fall back to LLM mode
+      * Create CarbonEmission record for drift check LLM calls
+    - This prevents SLM performance degradation over time due to:
+      * Input distribution shift
+      * Model staleness
+      * Changing user patterns
+    - Should be triggered from inference endpoint when model_used='slm'
+    """
     
     def __init__(self):
         self.training_service_url = os.getenv("TRAINING_SERVICE_URL", "http://training-service:8002")
@@ -47,8 +64,87 @@ class ModelLifecycleManager:
         """Initialize async components."""
         self.redis_client = redis.from_url(self.redis_url)
         await self.redis_client.ping()
+        
+        # Validate environment variables
+        self._validate_config()
+        
         logger.info("Model lifecycle manager initialized")
     
+    def _validate_config(self):
+        """Validate configuration settings."""
+        # Validate DEFAULT_EVALUATION_SAMPLE_SIZE
+        eval_sample_size = os.getenv("DEFAULT_EVALUATION_SAMPLE_SIZE", "50")
+        try:
+            size = int(eval_sample_size)
+            if size < 1:
+                logger.warning(f"Invalid DEFAULT_EVALUATION_SAMPLE_SIZE: {size}. Must be >= 1. Using default of 50.")
+            elif size > 1000:
+                logger.warning(f"Large DEFAULT_EVALUATION_SAMPLE_SIZE: {size}. This may slow down evaluations.")
+            else:
+                logger.info(f"Using DEFAULT_EVALUATION_SAMPLE_SIZE: {size}")
+        except ValueError:
+            logger.error(f"Invalid DEFAULT_EVALUATION_SAMPLE_SIZE: '{eval_sample_size}'. Must be an integer. Using default of 50.")
+        
+        # Validate DEPLOYMENT_THRESHOLD
+        threshold = os.getenv("DEPLOYMENT_THRESHOLD", "0.85")
+        try:
+            thresh = float(threshold)
+            if thresh < 0.0 or thresh > 1.0:
+                logger.warning(f"DEPLOYMENT_THRESHOLD {thresh} is outside valid range [0.0, 1.0]. Using default of 0.85.")
+            else:
+                logger.info(f"Using DEPLOYMENT_THRESHOLD: {thresh}")
+        except ValueError:
+            logger.error(f"Invalid DEPLOYMENT_THRESHOLD: '{threshold}'. Must be a float. Using default of 0.85.")
+    
+    async def training_ready_or_needed(
+            self,
+            db:AsyncSession,
+            endpoint_id:str,
+        ):
+
+        try:
+
+
+            from app.models.models import InferenceLog, Endpoint, EndpointConfig
+            from sqlalchemy import func
+
+            endpoint = await db.get(Endpoint, endpoint_id)
+            endpoint_config = await db.get(EndpointConfig, endpoint_id)
+
+            training_cutoff = endpoint.created_at
+            training_data_size_requirement = endpoint_config.training_batch_size
+
+            sample_count = await db.scalar(
+                select(func.count(InferenceLog.id)).where(
+                    InferenceLog.endpoint_id == endpoint_id,
+                    InferenceLog.model_used == "llm",
+                    InferenceLog.created_at > training_cutoff  # Only unseen data
+                )
+            )
+
+            ## TODO smart cadance like [10, 100, 1000]
+            if sample_count % training_data_size_requirement == 0:
+                
+                await self.queue_training(
+                    db=db,
+                    endpoint_id=endpoint_id,
+                    training_pairs_count=training_data_size_requirement,
+                    epochs=3,
+                    batch_size=training_data_size_requirement,
+                    learning_rate=endpoint_config.learning_rate,
+                )
+
+                return True
+
+
+
+            return False
+        except Exception as e:
+            logger.error(f"Error checking training readiness for {endpoint_id}: {e}")
+            raise
+
+
+
     async def start_training(
         self,
         db: AsyncSession,
@@ -64,6 +160,18 @@ class ModelLifecycleManager:
         try:
             # Create training record in database
             from app.models.models import TrainingRun
+            from sqlalchemy import func
+            
+            # Auto-increment version if not provided
+            if version is None:
+                # Get the next version number for this endpoint
+                max_version = await db.scalar(
+                    select(func.max(TrainingRun.version))
+                    .where(TrainingRun.endpoint_id == endpoint_id)
+                    .where(TrainingRun.is_deleted == False)
+                ) or 0
+                version = max_version + 1
+                logger.info(f"Auto-assigned version {version} for endpoint {endpoint_id} (previous max: {max_version})")
             
             training_record = TrainingRun(
                 train_id=train_id,
@@ -111,6 +219,96 @@ class ModelLifecycleManager:
             logger.error(f"Error starting training for {train_id}: {e}")
             await self._update_phase(db, train_id, "failed")
             raise
+
+    async def queue_training(
+            self,
+            db:AsyncSession,
+            endpoint_id:str,
+            training_pairs_count:int,
+            epochs:int,
+            batch_size:int,
+            learning_rate=float
+    ):
+        try:
+            from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+            from app.models import (
+                get_db, Endpoint, EndpointConfig, InferenceLog,
+                TrainingRun, Metric, CarbonEmission
+            )
+            from sqlalchemy import select, func
+            from app.training.gpu_queue_manager import gpu_queue_manager
+
+            # Check if endpoint exists
+            endpoint = await db.get(Endpoint, endpoint_id)
+            if not endpoint:
+                raise HTTPException(status_code=404, detail="Endpoint not found")
+            
+            # Check if we have enough data
+            inference_count = await db.scalar(
+                select(func.count(InferenceLog.id))
+                .where(InferenceLog.endpoint_id == endpoint_id)
+                .where(InferenceLog.model_used == "llm")
+            )
+            
+            if inference_count < 10:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Insufficient training data. Need at least 10 examples, have {inference_count}"
+                )
+            
+            # Determine training provider - use from request or check environment config
+            provider = 'runpod'
+            if not provider:
+                # Check environment for default cloud provider
+                import os
+                if os.getenv("RUNPOD_TRAINING_ENABLED", "false").lower() == "true":
+                    provider = "runpod"
+                elif os.getenv("LAMBDA_TRAINING_ENABLED", "false").lower() == "true":
+                    provider = "lambda"
+                elif os.getenv("AZURE_TRAINING_ENABLED", "false").lower() == "true":
+                    provider = "azure"
+            
+            # If provider is specified and GPU training is available, use cloud training
+            if provider and gpu_queue_manager:
+                # Initialize GPU queue manager if needed
+                if not gpu_queue_manager.redis_client:
+                    await gpu_queue_manager.initialize()
+                
+                # Get training examples
+                examples = await db.execute(
+                    select(InferenceLog.input_text, InferenceLog.llm_output)
+                    .where(InferenceLog.endpoint_id == endpoint_id)
+                    .where(InferenceLog.model_used == "llm")
+                    .limit(training_pairs_count if training_pairs_count else 1000)
+                )
+                
+                # Format training data
+                training_data_parts = []
+                for input_text, output_text in examples:
+                    training_data_parts.append(f"Q: {input_text}\nA: {output_text}")
+                
+                training_data = "\n\n".join(training_data_parts)
+                
+                # Create training configuration
+                training_config = {
+                    "epochs": epochs,
+                    "batch_size": batch_size,
+                    "learning_rate": learning_rate,
+                    "training_data": training_data
+                }
+                
+                # Add job to GPU queue
+                job_id = await gpu_queue_manager.add_job(
+                    endpoint_id=endpoint_id,
+                    training_config=training_config,
+                    priority=1,
+                    provider=provider
+                )
+        except Exception as e:
+            logger.error(f"Error starting training for {endpoint_id}: {e}")
+            raise
+
+
     
     async def handle_training_completion(
         self,
@@ -316,31 +514,208 @@ class ModelLifecycleManager:
             if not model:
                 raise Exception(f"Model not found: {train_id}")
             
-            # TODO: Collect evaluation pairs from recent LLM calls
-            # For now, create dummy evaluation pairs
-            evaluation_pairs = [
-                {
-                    "llm_response": "This is a sample LLM response for evaluation purposes.",
-                    "slm_response": "This will be replaced with actual SLM response."
-                }
-                # Add more evaluation pairs...
-            ]
+            # Collect evaluation data from NEW LLM inferences (unseen data only)
+            evaluation_sample_size = int(os.getenv("DEFAULT_EVALUATION_SAMPLE_SIZE", "50"))
+            
+            # Validate evaluation sample size
+            if evaluation_sample_size < 1:
+                logger.warning(f"Invalid DEFAULT_EVALUATION_SAMPLE_SIZE: {evaluation_sample_size}. Using default of 50.")
+                evaluation_sample_size = 50
+            elif evaluation_sample_size > 1000:
+                logger.warning(f"Large DEFAULT_EVALUATION_SAMPLE_SIZE: {evaluation_sample_size}. Consider reducing for faster evaluation.")
+            
+            logger.info(f"Starting evaluation workflow for {train_id} - need {evaluation_sample_size} unseen samples")
+            
+            from app.models.models import InferenceLog
+            from sqlalchemy import func
+            
+            # Only use inference logs created AFTER the training was completed
+            training_cutoff = model.created_at or datetime.now()
+            
+            # Get NEW LLM inferences for evaluation
+            recent_llm_inferences_stmt = select(InferenceLog).where(
+                InferenceLog.endpoint_id == model.endpoint_id,
+                InferenceLog.model_used == "llm",
+                InferenceLog.created_at > training_cutoff  # Only unseen data
+            ).order_by(InferenceLog.created_at.desc()).limit(evaluation_sample_size)
+            
+            recent_inferences_result = await db.execute(recent_llm_inferences_stmt)
+            recent_inferences = recent_inferences_result.scalars().all()
+            
+            if len(recent_inferences) < evaluation_sample_size:
+                # Not enough unseen data yet - set up monitoring for new inferences
+                still_needed = evaluation_sample_size - len(recent_inferences)
+                logger.info(f"Insufficient unseen samples for {train_id}: {len(recent_inferences)}/{evaluation_sample_size} available. Still need {still_needed} more LLM inferences after {training_cutoff}.")
+                
+                # Store evaluation request in Redis for monitoring
+                await self._queue_evaluation_request(train_id, model.endpoint_id, evaluation_sample_size, training_cutoff)
+                return
+            
+            # We have enough unseen data - prepare evaluation inputs
+            logger.info(f"Found {len(recent_inferences)} unseen LLM inferences for evaluation of {train_id}")
+            
+            evaluation_inputs = []
+            llm_outputs = []
+            
+            for inference in recent_inferences:
+                evaluation_inputs.append(inference.input_text)
+                llm_outputs.append(inference.llm_output)
+            
+            # Store evaluation context for when SLM batch job completes
+            evaluation_context = {
+                "train_id": train_id,
+                "endpoint_id": model.endpoint_id,
+                "version": model.version,
+                "evaluation_inputs": evaluation_inputs,
+                "llm_outputs": llm_outputs,
+                "created_at": datetime.now().isoformat()
+            }
+            
+            # Store evaluation context in Redis for SLM batch job completion
+            await self.redis_client.setex(
+                f"evaluation_context:{train_id}",
+                3600,  # 1 hour TTL
+                str(evaluation_context).encode()
+            )
             
             # Create SLM batch job for evaluation
-            batch_job = self.k8s_manager.create_slm_batch_job(
+            batch_job_result = self.k8s_manager.create_slm_batch_job(
                 train_id=train_id,
                 endpoint_id=model.endpoint_id,
                 version=model.version,
                 model_path=f"{model.endpoint_id}/v{model.version}",
-                evaluation_batch_id=f"eval_{train_id}"
+                evaluation_batch_id=train_id
             )
             
-            logger.info(f"Created evaluation batch job: {batch_job['job_name']}")
+            logger.info(f"Created evaluation batch job: {batch_job_result['job_name']} for {train_id}")
             
-            # TODO: Monitor job completion and trigger evaluation service
+            # The SLM batch job will call back when complete with SLM outputs
             
         except Exception as e:
             logger.error(f"Error starting evaluation workflow for {train_id}: {e}")
+            await self._update_phase(db, train_id, "failed")
+            raise
+    
+    async def _queue_evaluation_request(self, train_id: str, endpoint_id: str, required_samples: int, training_cutoff: datetime):
+        """Queue an evaluation request to be processed when enough unseen samples are available."""
+        evaluation_request = {
+            "train_id": train_id,
+            "endpoint_id": endpoint_id,
+            "required_samples": required_samples,
+            "training_cutoff": training_cutoff.isoformat(),
+            "queued_at": datetime.now().isoformat()
+        }
+        
+        # Store in Redis with endpoint-specific key
+        await self.redis_client.setex(
+            f"pending_evaluation:{endpoint_id}",
+            86400,  # 24 hours TTL
+            str(evaluation_request).encode()
+        )
+        
+        logger.info(f"Queued evaluation request for {train_id} - waiting for {required_samples} unseen samples after {training_cutoff}")
+    
+    async def check_pending_evaluations(self, db: AsyncSession, endpoint_id: str):
+        """Check if any pending evaluations can now be started (called after new LLM inference)."""
+        try:
+            # Check if there's a pending evaluation for this endpoint
+            pending_key = f"pending_evaluation:{endpoint_id}"
+            pending_data = await self.redis_client.get(pending_key)
+            
+            if not pending_data:
+                return  # No pending evaluation
+            
+            import ast
+            evaluation_request = ast.literal_eval(pending_data.decode())
+            train_id = evaluation_request["train_id"]
+            required_samples = evaluation_request["required_samples"]
+            # Parse ISO format datetime string - compatible with older Python versions
+            cutoff_str = evaluation_request["training_cutoff"]
+            # Handle both with and without microseconds
+            try:
+                training_cutoff = datetime.strptime(cutoff_str, "%Y-%m-%dT%H:%M:%S.%f")
+            except ValueError:
+                training_cutoff = datetime.strptime(cutoff_str, "%Y-%m-%dT%H:%M:%S")
+            
+            # Check if we now have enough unseen samples
+            from app.models.models import InferenceLog
+            from sqlalchemy import func
+            
+            sample_count = await db.scalar(
+                select(func.count(InferenceLog.id)).where(
+                    InferenceLog.endpoint_id == endpoint_id,
+                    InferenceLog.model_used == "llm",
+                    InferenceLog.created_at > training_cutoff  # Only unseen data
+                )
+            )
+            
+            if sample_count >= required_samples:
+                logger.info(f"Sufficient unseen samples ({sample_count}/{required_samples}) available for {train_id}. Starting evaluation.")
+                
+                # Remove from pending queue
+                # await self.redis_client.delete(pending_key)
+                
+                # Start evaluation workflow
+                await self._start_evaluation_workflow(db, train_id)
+            else:
+                still_needed = required_samples - sample_count
+                logger.debug(f"Still waiting for unseen samples: {sample_count}/{required_samples} for {train_id}. Need {still_needed} more.")
+                
+        except Exception as e:
+            logger.error(f"Error checking pending evaluations for {endpoint_id}: {e}")
+
+    async def handle_slm_batch_completion(
+        self,
+        db: AsyncSession,
+        train_id: str,
+        slm_outputs: List[str]
+    ) -> Dict[str, Any]:
+        """Handle completion of SLM batch job and trigger evaluation service."""
+        try:
+            # Get evaluation context from Redis
+            context_data = await self.redis_client.get(f"evaluation_context:{train_id}")
+            if not context_data:
+                raise Exception(f"Evaluation context not found for {train_id}")
+            
+            import ast
+            evaluation_context = ast.literal_eval(context_data.decode())
+            
+            llm_outputs = evaluation_context["llm_outputs"]
+            
+            if len(slm_outputs) != len(llm_outputs):
+                raise Exception(f"Mismatched output lengths: {len(slm_outputs)} SLM vs {len(llm_outputs)} LLM")
+            
+            # Create evaluation pairs
+            evaluation_pairs = []
+            for llm_output, slm_output in zip(llm_outputs, slm_outputs):
+                evaluation_pairs.append({
+                    "llm_response": llm_output,
+                    "slm_response": slm_output
+                })
+            
+            # Send to evaluation service
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.evaluation_service_url}/api/v1/evaluate",
+                    json={
+                        "train_id": train_id,
+                        "evaluation_pairs": evaluation_pairs
+                    }
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    logger.info(f"Evaluation job queued for {train_id}: {result}")
+                    
+                    # Clean up Redis context
+                    await self.redis_client.delete(f"evaluation_context:{train_id}")
+                    
+                    return {"status": "evaluation_queued", "result": result}
+                else:
+                    raise Exception(f"Evaluation service error: {response.status_code} {response.text}")
+                    
+        except Exception as e:
+            logger.error(f"Error handling SLM batch completion for {train_id}: {e}")
             await self._update_phase(db, train_id, "failed")
             raise
     

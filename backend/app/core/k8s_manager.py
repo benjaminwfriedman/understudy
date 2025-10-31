@@ -117,9 +117,29 @@ class K8sManager:
         evaluation_batch_id: str
     ) -> Dict[str, Any]:
         """Create a batch job for model evaluation."""
-        job_name = f"slm-eval-{train_id[:8]}"
+        # Include timestamp to make job name unique
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        job_name = f"slm-eval-{train_id[:8]}-{timestamp}"
         
         try:
+            # Check if a job with similar name exists and delete it if completed
+            try:
+                existing_jobs = self.batch_v1.list_namespaced_job(
+                    namespace=self.namespace,
+                    label_selector=f"train_id={train_id},app=slm-inference,mode=batch"
+                )
+                for existing_job in existing_jobs.items:
+                    if existing_job.status.succeeded or existing_job.status.failed:
+                        # Delete completed/failed jobs
+                        logger.info(f"Deleting old job: {existing_job.metadata.name}")
+                        self.batch_v1.delete_namespaced_job(
+                            name=existing_job.metadata.name,
+                            namespace=self.namespace,
+                            propagation_policy="Background"
+                        )
+            except ApiException as e:
+                logger.debug(f"No existing jobs to clean up: {e}")
+            
             job = self._build_job_spec(
                 name=job_name,
                 train_id=train_id,
@@ -242,6 +262,35 @@ class K8sManager:
                 return None
             logger.error(f"Failed to get job status: {e}")
             raise
+    
+    def cleanup_completed_jobs(self) -> int:
+        """Clean up completed batch jobs to prevent namespace clutter."""
+        try:
+            jobs = self.batch_v1.list_namespaced_job(
+                namespace=self.namespace,
+                label_selector="app=slm-inference,mode=batch"
+            )
+            
+            cleaned_count = 0
+            for job in jobs.items:
+                # Delete if succeeded or failed
+                if job.status.succeeded or job.status.failed:
+                    try:
+                        self.batch_v1.delete_namespaced_job(
+                            name=job.metadata.name,
+                            namespace=self.namespace,
+                            propagation_policy="Background"
+                        )
+                        logger.info(f"Cleaned up completed job: {job.metadata.name}")
+                        cleaned_count += 1
+                    except ApiException as e:
+                        logger.warning(f"Failed to cleanup job {job.metadata.name}: {e}")
+            
+            return cleaned_count
+            
+        except ApiException as e:
+            logger.error(f"Failed to cleanup jobs: {e}")
+            return 0
     
     def list_slm_deployments(self) -> List[Dict[str, Any]]:
         """List all SLM deployments."""
@@ -434,12 +483,18 @@ class K8sManager:
         
         container = client.V1Container(
             name="slm-inference",
-            image="bennyfriedman/understudy-slm-inference:latest",
+            image="bennyfriedman/understudy-slm-inference:latest-amd64",
+            image_pull_policy="Always",
             env=[
-                client.V1EnvVar(name="MODEL_PATH", value=model_path),
+                client.V1EnvVar(name="MODEL_PATH", value="/models"),
+                client.V1EnvVar(name="ENDPOINT_ID", value=endpoint_id),
+                client.V1EnvVar(name="VERSION", value=str(version)),
+                client.V1EnvVar(name="MODE", value="batch"),
                 client.V1EnvVar(name="EVAL_BATCH_ID", value=evaluation_batch_id),
+                client.V1EnvVar(name="TRAIN_ID", value=train_id),
                 client.V1EnvVar(name="BACKEND_URL", value=os.getenv("BACKEND_URL", "http://backend-service:8000")),
-                client.V1EnvVar(name="MODEL_BROKER_URL", value=self.model_broker_url)
+                client.V1EnvVar(name="MODEL_BROKER_URL", value=self.model_broker_url),
+                client.V1EnvVar(name="HF_TOKEN", value=os.getenv("HF_TOKEN", ""))
             ],
             volume_mounts=[
                 client.V1VolumeMount(
@@ -449,8 +504,8 @@ class K8sManager:
                 )
             ],
             resources=client.V1ResourceRequirements(
-                requests={"cpu": "2", "memory": "4Gi"},
-                limits={"cpu": "4", "memory": "8Gi"}
+                requests={"cpu": "2", "memory": "8Gi"},
+                limits={"cpu": "4", "memory": "16Gi"}
             )
         )
         
@@ -475,7 +530,7 @@ class K8sManager:
         spec = client.V1JobSpec(
             template=template,
             backoff_limit=3,
-            ttl_seconds_after_finished=86400  # 24 hours
+            ttl_seconds_after_finished=3600  # 1 hour - reduced from 24 hours for faster cleanup
         )
         
         job = client.V1Job(

@@ -102,17 +102,37 @@ app.add_middleware(
 def calculate_similarity(llm_response: str, slm_response: str) -> float:
     """Calculate semantic similarity between two responses using sentence transformers."""
     try:
-        # Encode both responses
-        embeddings = similarity_model.encode([llm_response, slm_response])
+        # Encode both responses separately to avoid batch operations
+        embedding1 = similarity_model.encode(llm_response, convert_to_tensor=False)
+        embedding2 = similarity_model.encode(slm_response, convert_to_tensor=False)
         
-        # Calculate cosine similarity
-        similarity = util.cos_sim(embeddings[0], embeddings[1])
+        # Calculate cosine similarity using numpy instead of torch
+        import numpy as np
+        from numpy.linalg import norm
         
-        # Return as float (0-1 range)
-        return float(similarity.item())
+        # Convert to numpy arrays if they aren't already
+        emb1 = np.array(embedding1)
+        emb2 = np.array(embedding2)
+        
+        # Manual cosine similarity calculation
+        dot_product = np.dot(emb1, emb2)
+        norm1 = norm(emb1)
+        norm2 = norm(emb2)
+        
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+            
+        similarity = dot_product / (norm1 * norm2)
+        
+        # Ensure result is in [0, 1] range
+        similarity = max(0.0, min(1.0, float(similarity)))
+        
+        logger.debug(f"Calculated similarity: {similarity:.3f}")
+        return similarity
         
     except Exception as e:
         logger.error(f"Error calculating similarity: {e}")
+        # Fallback to simple text similarity
         return 0.0
 
 
@@ -192,7 +212,7 @@ async def send_results_to_backend(
         
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{BACKEND_URL}/api/v1/models/{train_id}/similarity-score",
+                f"{BACKEND_URL}/api/v1/lifecycle/models/{train_id}/similarity-score",
                 json=result.dict()
             )
             

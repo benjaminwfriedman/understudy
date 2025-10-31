@@ -294,6 +294,7 @@ class RunPodTrainer:
                     await self._update_training_status(job_id, "installing_packages")
                     
                     # Install packages with timeout and progress monitoring
+                    ## TODO set the exact versions
                     install_cmd = """
                     cd /workspace && \
                     pip install --upgrade pip && \
@@ -306,6 +307,21 @@ class RunPodTrainer:
                     
                     if result.exit_status != 0:
                         logger.error(f"Package installation failed: {result.stderr}")
+                        raise Exception(f"Package installation failed: {result.stderr}")
+                    
+                    # Log package versions after installation
+                    logger.info("Logging package versions used in training...")
+                    log_versions_cmd = """
+                    echo "=== PACKAGE VERSIONS USED IN TRAINING ===" && \
+                    pip show torch transformers peft accelerate datasets codecarbon bitsandbytes | grep -E "(Name|Version)" && \
+                    echo "==========================================="
+                    """
+                    
+                    version_result = await conn.run(log_versions_cmd, timeout=60)
+                    if version_result.exit_status == 0:
+                        logger.info(f"Training environment package versions:\n{version_result.stdout}")
+                    else:
+                        logger.warning(f"Could not log package versions: {version_result.stderr}")
                         return False
                     
                     logger.info("Packages installed successfully")

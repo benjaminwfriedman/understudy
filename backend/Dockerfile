@@ -20,6 +20,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
     pip install -r requirements.txt
 
 # Base stage

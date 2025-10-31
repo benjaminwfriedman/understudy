@@ -1,0 +1,20 @@
+# Ignore everything from parent directories
+../*
+
+# But include only what we need
+!requirements.txt
+!main.py
+!Dockerfile
+
+# Common ignores
+.git
+.gitignore
+*.pyc
+__pycache__
+.pytest_cache
+.venv
+venv/
+.env
+.DS_Store
+node_modules/
+*.log

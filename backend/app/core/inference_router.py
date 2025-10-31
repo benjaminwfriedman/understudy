@@ -148,9 +148,6 @@ class InferenceRouter:
             langchain_metadata=langchain_metadata
         )
         
-        # If using LLM, check if we should evaluate SLM
-        if model_used == "llm" and endpoint.slm_model_path and not config.auto_switchover:
-            await self._evaluate_slm_readiness(endpoint, prompt or self._messages_to_text(messages), output)
         
         return {
             "output": output,

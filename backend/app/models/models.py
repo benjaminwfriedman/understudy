@@ -46,7 +46,6 @@ class InferenceLog(Base):
     
     # Relationships
     endpoint = relationship("Endpoint", back_populates="inference_logs")
-    carbon_emissions = relationship("CarbonEmission", back_populates="inference_log", cascade="all, delete-orphan")
 
 
 class TrainingRun(Base):
@@ -102,7 +101,6 @@ class TrainingRun(Base):
     
     # Relationships
     endpoint = relationship("Endpoint", back_populates="training_runs")
-    carbon_emissions = relationship("CarbonEmission", back_populates="training_run", cascade="all, delete-orphan")
 
 
 class Metric(Base):
@@ -121,20 +119,43 @@ class Metric(Base):
 class CarbonEmission(Base):
     __tablename__ = "carbon_emissions"
     
+    # Primary identifier
     id = Column(String, primary_key=True, default=generate_uuid)
-    training_run_id = Column(String, ForeignKey("training_runs.id"))
-    inference_log_id = Column(String, ForeignKey("inference_logs.id"))
+    
+    # Event identification
+    event_id = Column(String, nullable=False)  # ID of the specific event (training_run_id, inference_log_id, etc.)
+    event_type = Column(String, nullable=False)  # 'training', 'inference', 'batch_inference', 'evaluation', etc.
+    
+    # Optional foreign keys for maintaining relationships
+    endpoint_id = Column(String, ForeignKey("endpoints.id"))  # Direct link to endpoint for aggregation
+    
+    # Timestamp
     timestamp = Column(DateTime, nullable=False, server_default=func.now())
+    
+    # CodeCarbon metrics
     duration_seconds = Column(Float)
-    emissions_kg = Column(Float)
-    energy_consumed_kwh = Column(Float)
-    cpu_power_w = Column(Float)
-    gpu_power_w = Column(Float)
-    country_iso_code = Column(String)
+    emissions_kg = Column(Float)  # CO2 equivalent emissions
+    energy_consumed_kwh = Column(Float)  # Total energy consumption
+    cpu_power_w = Column(Float)  # Average CPU power draw
+    gpu_power_w = Column(Float)  # Average GPU power draw
+    ram_power_w = Column(Float)  # Average RAM power draw
+    
+    # Additional context
+    country_iso_code = Column(String)  # Location of computation
+    region = Column(String)  # Cloud region or data center
+    provider = Column(String)  # 'aws', 'gcp', 'azure', 'local', etc.
+    
+    # Model/computation details
+    model_name = Column(String)  # Name of model used
+    model_size_mb = Column(Float)  # Size of model in MB
+    data_processed_mb = Column(Float)  # Amount of data processed
+    
+    # Organization tracking
+    organization_id = Column(String)  # For multi-tenant tracking
+    project_name = Column(String)  # Project or team name
     
     # Relationships
-    training_run = relationship("TrainingRun", back_populates="carbon_emissions")
-    inference_log = relationship("InferenceLog", back_populates="carbon_emissions")
+    endpoint = relationship("Endpoint", backref="carbon_emissions")
 
 
 class EndpointConfig(Base):

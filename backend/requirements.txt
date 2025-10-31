@@ -18,9 +18,10 @@ redis==5.0.1
 openai>=1.6.1
 anthropic>=0.7.0
 
-# ML & Training - Use more flexible versions
+# ML & Training - Note: PyTorch CPU-only versions installed separately in Dockerfile
 transformers>=4.30.0
-torch>=2.0.0
+# torch>=2.0.0  # Installed separately as CPU-only version
+# torchvision>=0.15.0  # Installed separately as CPU-only version
 peft>=0.6.0
 datasets>=2.10.0
 accelerate>=0.20.0
