@@ -341,42 +341,24 @@ class K8sManager:
         
         container = client.V1Container(
             name="slm-server",
-            image="vllm/vllm-openai:latest",
-            command=["python", "-m", "vllm.entrypoints.openai.api_server"],
-            args=[
-                f"--model={model_path}",
-                "--port=8000",
-                "--host=0.0.0.0"
-            ],
+            image="bennyfriedman/understudy-slm-inference:latest-arm64",
+            command=["python", "main.py"],
             ports=[client.V1ContainerPort(container_port=8000)],
             resources=client.V1ResourceRequirements(
-                requests={"cpu": "4", "memory": "8Gi"},
-                limits={"cpu": "8", "memory": "16Gi"}
+                requests={"cpu": "2", "memory": "6Gi"},
+                limits={"cpu": "2", "memory": "6Gi"}
             ),
             env=[
                 client.V1EnvVar(name="MODEL_BROKER_URL", value=self.model_broker_url),
                 client.V1EnvVar(name="ENDPOINT_ID", value=endpoint_id),
-                client.V1EnvVar(name="VERSION", value=str(version))
-            ],
-            volume_mounts=[
-                client.V1VolumeMount(
-                    name="model-store",
-                    mount_path="/models",
-                    read_only=True
-                )
+                client.V1EnvVar(name="VERSION", value=str(version)),
+                client.V1EnvVar(name="MODEL_PATH", value=model_path),
+                client.V1EnvVar(name="HF_TOKEN", value=os.getenv("HF_TOKEN", ""))
             ]
         )
         
         pod_spec = client.V1PodSpec(
-            containers=[container],
-            volumes=[
-                client.V1Volume(
-                    name="model-store",
-                    persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
-                        claim_name="model-weights-pvc"
-                    )
-                )
-            ]
+            containers=[container]
         )
         
         template = client.V1PodTemplateSpec(
