@@ -263,6 +263,48 @@ class K8sManager:
             logger.error(f"Failed to get job status: {e}")
             raise
     
+    def detect_node_architecture(self) -> str:
+        """
+        Detect the architecture of available nodes in the cluster.
+        Returns 'amd64' or 'arm64' based on node capabilities.
+        Defaults to 'arm64' if detection fails.
+        """
+        try:
+            nodes = self.core_v1.list_node()
+            
+            # Count architectures
+            arch_count = {}
+            for node in nodes.items:
+                arch = node.status.node_info.architecture
+                arch_count[arch] = arch_count.get(arch, 0) + 1
+            
+            if not arch_count:
+                logger.warning("No nodes found, defaulting to arm64")
+                return "arm64"
+            
+            # Return the most common architecture
+            most_common_arch = max(arch_count, key=arch_count.get)
+            logger.info(f"Detected cluster architecture: {most_common_arch} ({arch_count})")
+            
+            return most_common_arch
+            
+        except Exception as e:
+            logger.error(f"Failed to detect node architecture: {e}")
+            logger.info("Defaulting to arm64")
+            return "arm64"
+    
+    def get_slm_inference_image(self) -> str:
+        """
+        Get the appropriate SLM inference image based on cluster architecture.
+        """
+        arch = self.detect_node_architecture()
+        base_image = "bennyfriedman/understudy-slm-inference"
+        
+        if arch == "amd64":
+            return f"{base_image}:latest-amd64"
+        else:  # arm64 or any other arch defaults to arm64
+            return f"{base_image}:latest-arm64"
+    
     def cleanup_completed_jobs(self) -> int:
         """Clean up completed batch jobs to prevent namespace clutter."""
         try:
@@ -341,7 +383,7 @@ class K8sManager:
         
         container = client.V1Container(
             name="slm-server",
-            image="bennyfriedman/understudy-slm-inference:latest-arm64",
+            image=self.get_slm_inference_image(),
             command=["python", "main.py"],
             ports=[client.V1ContainerPort(container_port=8000)],
             resources=client.V1ResourceRequirements(
@@ -470,7 +512,7 @@ class K8sManager:
         
         container = client.V1Container(
             name="slm-inference",
-            image="bennyfriedman/understudy-slm-inference:latest-arm64",
+            image=self.get_slm_inference_image(),
             image_pull_policy="Always",
             env=[
                 client.V1EnvVar(name="MODEL_PATH", value="/models"),
