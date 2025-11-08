@@ -6,6 +6,7 @@ from datetime import datetime
 import time
 import logging
 import json
+import httpx
 
 try:
     from app.providers.factory import ProviderFactory
@@ -90,28 +91,35 @@ class InferenceRouter:
         carbon_emissions = None
         
         if use_slm:
-            # Use trained SLM
+            # Use deployed SLM service
             try:
-                if messages:
-                    result = await self.slm_engine.generate_with_messages(
-                        endpoint.slm_model_path,
-                        messages,
-                        **kwargs
-                    )
-                else:
-                    result = await self.slm_engine.generate(
-                        endpoint.slm_model_path,
-                        prompt,
-                        **kwargs
-                    )
+                # Construct SLM service URL from model path
+                # endpoint.slm_model_path format: "endpoint_id/v1"
+                service_name = f"slm-{endpoint_id}-svc"
+                slm_url = f"http://{service_name}.understudy.svc.cluster.local:80"
                 
-                output = result["output"]
+                # Prepare request payload
+                payload = {
+                    "prompt": prompt,
+                    **kwargs
+                }
+                if messages:
+                    payload["messages"] = [{"role": msg.type, "content": msg.content} for msg in messages]
+                
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(f"{slm_url}/inference", json=payload)
+                    response.raise_for_status()
+                    result = response.json()
+                
+                output = result["text"]  # SLM service returns "text" not "output"
                 model_used = "slm"
-                cost = 0.0001  # Estimated local inference cost
+                cost = 0.0001  # Estimated SLM inference cost
                 carbon_emissions = result.get("carbon_emissions")
                 
+                logger.info(f"SLM inference successful via {slm_url}")
+                
             except Exception as e:
-                logger.error(f"SLM inference failed, falling back to LLM: {e}")
+                logger.error(f"SLM service inference failed, falling back to LLM: {e}")
                 use_slm = False
         
         if not use_slm:

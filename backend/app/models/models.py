@@ -18,6 +18,7 @@ class Endpoint(Base):
     llm_provider = Column(String, nullable=False)  # 'openai', 'anthropic', etc.
     llm_model = Column(String, nullable=False)      # 'gpt-4', 'claude-3-sonnet', etc.
     slm_model_path = Column(String)                 # Path to trained SLM
+    deployed_version = Column(Integer)              # Version of deployed TrainingRun
     status = Column(String, nullable=False, default="training")  # 'training', 'ready', 'active'
     langchain_compatible = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
@@ -160,7 +161,7 @@ class EndpointConfig(Base):
     endpoint_id = Column(String, ForeignKey("endpoints.id"), primary_key=True)
     training_batch_size = Column(Integer, default=100)
     similarity_threshold = Column(Float, default=0.95)
-    auto_switchover = Column(Boolean, default=False)
+    auto_switchover = Column(Boolean, default=True)
     lora_r = Column(Integer, default=8)
     lora_alpha = Column(Integer, default=16)
     learning_rate = Column(Float, default=0.0003)

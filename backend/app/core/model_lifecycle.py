@@ -386,6 +386,18 @@ class ModelLifecycleManager:
         try:
             logger.info(f"Received similarity score for {train_id}: {similarity_score}")
             
+            # Get the training run to find endpoint_id
+            training_run_stmt = select(TrainingRun).where(TrainingRun.train_id == train_id)
+            result = await db.execute(training_run_stmt)
+            training_run = result.scalar_one_or_none()
+            
+            if not training_run:
+                raise Exception(f"Training run not found: {train_id}")
+            
+            # Get endpoint config to check auto_switchover
+            from app.models.models import Endpoint, EndpointConfig
+            config = await db.get(EndpointConfig, training_run.endpoint_id)
+            
             # Update database with similarity score
             stmt = update(TrainingRun).where(
                 TrainingRun.train_id == train_id
@@ -394,14 +406,35 @@ class ModelLifecycleManager:
                 phase="available"
             )
             await db.execute(stmt)
-            await db.commit()
             
-            # Check if we should deploy
+            # Determine action based on threshold and auto_switchover
             if similarity_score >= self.deployment_threshold:
-                logger.info(f"Similarity score {similarity_score} >= {self.deployment_threshold}, deploying model")
-                await self._deploy_model(db, train_id)
+                if config and config.auto_switchover:
+                    logger.info(f"Similarity score {similarity_score} >= {self.deployment_threshold} and auto_switchover=True, deploying model")
+                    await db.commit()
+                    await self._deploy_model(db, train_id)
+                else:
+                    logger.info(f"Similarity score {similarity_score} >= {self.deployment_threshold} but auto_switchover=False, marking as ready")
+                    # Set endpoint status to 'ready' since model meets threshold but auto deploy is off
+                    endpoint_stmt = update(Endpoint).where(
+                        Endpoint.id == training_run.endpoint_id
+                    ).values(
+                        status="ready"
+                    )
+                    await db.execute(endpoint_stmt)
+                    await db.commit()
+                    logger.info(f"Set endpoint {training_run.endpoint_id} status to 'ready' (meets threshold but auto_switchover off)")
             else:
-                logger.info(f"Similarity score {similarity_score} < {self.deployment_threshold}, model remains available")
+                logger.info(f"Similarity score {similarity_score} < {self.deployment_threshold}, marking as low_performance")
+                # Set endpoint status to 'low_performance' since model doesn't meet threshold
+                endpoint_stmt = update(Endpoint).where(
+                    Endpoint.id == training_run.endpoint_id
+                ).values(
+                    status="low_performance"
+                )
+                await db.execute(endpoint_stmt)
+                await db.commit()
+                logger.info(f"Set endpoint {training_run.endpoint_id} status to 'low_performance' (below threshold)")
             
             return {
                 "status": "processed",
@@ -450,7 +483,7 @@ class ModelLifecycleManager:
             # Update phase to available
             await self._update_phase(db, current_model.train_id, "available")
             
-            # Clear deployment name
+            # Clear deployment name in TrainingRun
             stmt = update(TrainingRun).where(
                 TrainingRun.train_id == current_model.train_id
             ).values(
@@ -458,7 +491,20 @@ class ModelLifecycleManager:
                 inference_mode=None
             )
             await db.execute(stmt)
+            
+            # Clear endpoint fields for routing
+            from app.models.models import Endpoint
+            endpoint_stmt = update(Endpoint).where(
+                Endpoint.id == endpoint_id
+            ).values(
+                slm_model_path=None,
+                deployed_version=None,
+                status="ready"
+            )
+            await db.execute(endpoint_stmt)
             await db.commit()
+            
+            logger.info(f"Cleared endpoint {endpoint_id}: slm_model_path=None, deployed_version=None, status=ready")
             
             return {
                 "status": "undeployed",
@@ -785,7 +831,7 @@ class ModelLifecycleManager:
                 model_path=f"{model.endpoint_id}/v{model.version}"
             )
             
-            # Update database
+            # Update TrainingRun database
             stmt = update(TrainingRun).where(
                 TrainingRun.train_id == train_id
             ).values(
@@ -794,9 +840,21 @@ class ModelLifecycleManager:
                 inference_mode="endpoint"
             )
             await db.execute(stmt)
+            
+            # Update Endpoint table for routing
+            from app.models.models import Endpoint
+            endpoint_stmt = update(Endpoint).where(
+                Endpoint.id == model.endpoint_id
+            ).values(
+                slm_model_path=f"{model.endpoint_id}/v{model.version}",
+                status="active",
+                deployed_version=model.version
+            )
+            await db.execute(endpoint_stmt)
             await db.commit()
             
             logger.info(f"Model deployed: {train_id} -> {deployment['deployment_name']}")
+            logger.info(f"Updated endpoint {model.endpoint_id}: slm_model_path={model.endpoint_id}/v{model.version}, status=active, deployed_version={model.version}")
             
             return {
                 "status": "deployed",
