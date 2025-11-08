@@ -52,35 +52,28 @@ class RunPodInstanceInfo(BaseModel):
     cost_per_hour: Optional[float] = None
 
 
-# Initialize RunPod trainer (lazy loading)
-runpod_trainer = None
+# Training service client for RunPod operations
 
 
-def get_runpod_trainer():
-    """Get RunPod trainer instance (lazy initialization)"""
-    global runpod_trainer
-    if runpod_trainer is None:
-        from app.training.runpod_trainer import RunPodTrainer
-        runpod_trainer = RunPodTrainer()
-    return runpod_trainer
+def get_training_client():
+    """Get training service client instance (lazy initialization)"""
+    from app.core.training_client import get_training_client
+    return get_training_client()
 
 
 @router.get("/gpu-types")
 async def list_gpu_types() -> Dict[str, Any]:
     """List available GPU types and their pricing"""
-    try:
-        trainer = get_runpod_trainer()
-        gpu_types = await trainer.get_available_gpu_types()
-        
-        return {
-            "gpu_types": gpu_types,
-            "total_available": len(gpu_types),
-            "recommended": "NVIDIA GeForce RTX 4090"  # Good price/performance ratio
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to list GPU types: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    # Static response for now - could be enhanced to query training service
+    return {
+        "gpu_types": [
+            {"name": "NVIDIA GeForce RTX 4090", "price_per_hour": 0.34, "available": True},
+            {"name": "NVIDIA RTX A6000", "price_per_hour": 0.79, "available": True},
+            {"name": "NVIDIA GeForce RTX 3090", "price_per_hour": 0.22, "available": True}
+        ],
+        "total_available": 3,
+        "recommended": "NVIDIA GeForce RTX 4090"
+    }
 
 
 @router.post("/train")
@@ -139,21 +132,27 @@ async def get_training_progress(job_id: str) -> RunPodTrainingProgressResponse:
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         
-        # Get training logs if available
-        trainer = get_runpod_trainer()
-        logs = await trainer.get_training_logs(job_id)
+        # Get training status from training service
+        client = get_training_client()
+        training_status = await client.get_training_status(job_id)
         
-        # Extract progress information from logs
-        progress_info = _extract_progress_from_logs(logs)
+        if not training_status.get("success"):
+            raise HTTPException(status_code=404, detail="Training status not found")
+        
+        progress_info = {
+            "progress": training_status.get("progress", 0),
+            "current_epoch": None,  # Would need enhanced training service response
+            "current_loss": None
+        }
         
         return RunPodTrainingProgressResponse(
             job_id=job_id,
-            status=job["status"],
+            status=training_status.get("status", job["status"]),
             progress=progress_info.get("progress"),
             current_epoch=progress_info.get("current_epoch"),
             total_epochs=job.get("training_config", {}).get("epochs"),
             current_loss=progress_info.get("current_loss"),
-            logs=[log["message"] for log in logs[-20:]] if logs else [],  # Last 20 logs
+            logs=[],  # Training service would provide logs
             metrics=job.get("result", {}).get("metrics") if job.get("result") else None
         )
         
@@ -209,17 +208,20 @@ async def cancel_training_job(job_id: str) -> Dict[str, Any]:
         if job.get("provider") != "runpod":
             raise HTTPException(status_code=400, detail="Job is not a RunPod job")
         
-        # Cancel the job
-        success = await gpu_queue_manager.cancel_job(job_id)
+        # Cancel the job via training service
+        client = get_training_client()
+        result = await client.cancel_training(job_id)
         
-        if success:
+        if result.get("success"):
+            # Also cancel in queue manager
+            await gpu_queue_manager.cancel_job(job_id)
             return {
                 "message": f"Training job {job_id} cancelled successfully",
                 "job_id": job_id,
                 "status": "cancelled"
             }
         else:
-            raise HTTPException(status_code=400, detail="Failed to cancel job")
+            raise HTTPException(status_code=400, detail=result.get("error", "Failed to cancel job"))
         
     except HTTPException:
         raise
@@ -231,75 +233,38 @@ async def cancel_training_job(job_id: str) -> Dict[str, Any]:
 @router.get("/instances")
 async def list_runpod_instances() -> Dict[str, Any]:
     """List all RunPod instances"""
-    try:
-        trainer = get_runpod_trainer()
-        pods = await trainer.get_existing_pods()
-        
-        instances = []
-        for pod in pods:
-            runtime = pod.get("runtime", {})
-            uptime = runtime.get("uptimeInSeconds") if runtime else None
-            
-            instances.append(RunPodInstanceInfo(
-                id=pod["id"],
-                name=pod["name"],
-                status=pod.get("desiredStatus", "unknown"),
-                gpu_type=pod.get("gpuCount", "1") + "x GPU",  # Simplified
-                created_at=datetime.utcnow(),  # Would need actual creation time
-                uptime_seconds=uptime
-            ))
-        
-        return {
-            "instances": [instance.dict() for instance in instances],
-            "total": len(instances),
-            "provider": "runpod"
-        }
-        
-    except Exception as e:
-        logger.error(f"Failed to list RunPod instances: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    # Instance management now handled by training service
+    # This endpoint would need to query training service for instance info
+    return {
+        "instances": [],
+        "total": 0,
+        "provider": "runpod",
+        "message": "Instance management handled by training service"
+    }
 
 
 @router.delete("/instances/{instance_id}")
 async def terminate_instance(instance_id: str) -> Dict[str, Any]:
     """Terminate a specific RunPod instance"""
-    try:
-        trainer = get_runpod_trainer()
-        success = await trainer.terminate_pod(instance_id)
-        
-        if success:
-            return {
-                "message": f"RunPod instance {instance_id} terminated successfully",
-                "instance_id": instance_id,
-                "status": "terminated"
-            }
-        else:
-            raise HTTPException(status_code=400, detail="Failed to terminate instance")
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to terminate instance: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    # Instance termination now handled by training service
+    raise HTTPException(
+        status_code=501, 
+        detail="Instance termination handled by training service. Use training job cancellation instead."
+    )
 
 
 @router.get("/status")
 async def get_runpod_status() -> Dict[str, Any]:
     """Get RunPod training infrastructure status"""
     try:
-        trainer = get_runpod_trainer()
-        
-        # Get available GPU types
-        gpu_types = await trainer.get_available_gpu_types()
-        
-        # Get existing instances
-        pods = await trainer.get_existing_pods()
+        # Check training service health
+        client = get_training_client()
+        is_healthy = await client.health_check()
         
         return {
-            "status": "ready",
+            "status": "ready" if is_healthy else "degraded",
             "provider": "runpod",
-            "available_gpu_types": len(gpu_types),
-            "active_instances": len(pods),
+            "training_service_healthy": is_healthy,
             "recommended_gpu": "NVIDIA GeForce RTX 4090",
             "features": [
                 "Per-second billing",

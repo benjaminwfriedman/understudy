@@ -1,0 +1,11 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+httpx==0.25.2
+pydantic==2.5.0
+redis==5.0.1
+numpy<2.0.0
+# torch==2.1.1  # CPU-only version installed in Dockerfile
+transformers==4.57.1
+accelerate==1.11.0
+safetensors>=0.4.1
+peft==0.17.1

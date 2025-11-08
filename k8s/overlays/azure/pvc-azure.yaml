@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-weights-pvc
+  namespace: understudy
+spec:
+  accessModes:
+    - ReadWriteMany  # Allow model-broker and training-service to share
+  storageClassName: azurefile  # Use Azure Files for shared access
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data-pvc
+  namespace: understudy
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: default
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data-pvc
+  namespace: understudy
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: default
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: training-data-pvc
+  namespace: understudy
+spec:
+  accessModes:
+    - ReadWriteMany  # Allow multiple pods like local
+  storageClassName: azurefile  # Use Azure Files for shared access
+  resources:
+    requests:
+      storage: 10Gi

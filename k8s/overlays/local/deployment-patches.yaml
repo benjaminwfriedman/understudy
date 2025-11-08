@@ -1,0 +1,93 @@
+# Patches for local Docker Desktop deployment to avoid overwhelming resources
+
+# Backend - reduce replicas and resources
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: understudy
+spec:
+  replicas: 1  # Reduce from 2 to 1
+  template:
+    spec:
+      containers:
+      - name: backend
+        resources:
+          requests:
+            cpu: "250m"      # Reduced from 500m
+            memory: "512Mi"  # Reduced from 1Gi
+          limits:
+            cpu: "500m"      # Reduced from 2000m
+            memory: "1Gi"    # Reduced from 2Gi
+
+# Frontend - reduce replicas only
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: understudy
+spec:
+  replicas: 1  # Reduce from 2 to 1
+
+# Evaluation Service - reduce replicas but keep decent memory for sentence transformers
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evaluation-service
+  namespace: understudy
+spec:
+  replicas: 1  # Reduce from 2 to 1
+  template:
+    spec:
+      containers:
+      - name: evaluation-service
+        resources:
+          requests:
+            cpu: "250m"      # Reduced from 500m
+            memory: "768Mi"  # Keep higher for sentence transformers
+          limits:
+            cpu: "500m"      # Reduced from 2000m
+            memory: "1.5Gi"  # Keep higher for model loading
+
+# Model Broker - increase memory for handling model weights
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-broker
+  namespace: understudy
+spec:
+  template:
+    spec:
+      containers:
+      - name: model-broker
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "1Gi"    # Increased from 512Mi for model handling
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"    # Increased from 1Gi for model transfers
+
+# Training Service - keep current settings (just coordinates with RunPod)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: training-service
+  namespace: understudy
+spec:
+  template:
+    spec:
+      containers:
+      - name: training-service
+        resources:
+          requests:
+            cpu: "200m"      # Slightly reduced
+            memory: "256Mi"  # Reduced from 512Mi (just API calls)
+          limits:
+            cpu: "500m"      # Reduced from 1000m
+            memory: "512Mi"  # Reduced from 1Gi

@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: understudy
+spec:
+  template:
+    spec:
+      containers:
+      - name: backend
+        image: bennyfriedman/understudy-backend:latest-arm64
+        imagePullPolicy: Always
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: understudy
+spec:
+  template:
+    spec:
+      containers:
+      - name: frontend
+        image: bennyfriedman/understudy-frontend:latest-arm64
+        imagePullPolicy: Always
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evaluation-service
+  namespace: understudy
+spec:
+  template:
+    spec:
+      containers:
+      - name: evaluation-service
+        image: bennyfriedman/understudy-evaluation:latest-arm64
+        imagePullPolicy: Always
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: training-service
+  namespace: understudy
+spec:
+  template:
+    spec:
+      containers:
+      - name: training-service
+        image: bennyfriedman/understudy-training:latest-arm64
+        imagePullPolicy: Always
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-broker
+  namespace: understudy
+spec:
+  template:
+    spec:
+      containers:
+      - name: model-broker
+        image: bennyfriedman/understudy-model-broker:latest-arm64
+        imagePullPolicy: Always

@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: training-service
+  namespace: understudy
+spec:
+  selector:
+    app: training-service
+  ports:
+    - name: http
+      port: 8002
+      targetPort: 8002
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: training-service
+  namespace: understudy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: training-service
+  template:
+    metadata:
+      labels:
+        app: training-service
+    spec:
+      serviceAccountName: training-service
+      initContainers:
+      - name: setup-ssh-keys
+        image: busybox:1.35
+        command: ['sh', '-c']
+        args:
+          - |
+            cp /tmp/ssh-keys/runpod_ssh_key /app/keys/runpod_ssh_key
+            chmod 400 /app/keys/runpod_ssh_key
+            chown 999:999 /app/keys/runpod_ssh_key
+            ls -la /app/keys/
+        volumeMounts:
+        - name: ssh-keys
+          mountPath: /tmp/ssh-keys
+          readOnly: true
+        - name: ssh-keys-writable
+          mountPath: /app/keys
+      containers:
+      - name: training-service
+        image: bennyfriedman/understudy-training:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8002
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: understudy-secrets
+              key: DATABASE_URL
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: understudy-secrets
+              key: REDIS_URL
+        - name: RUNPOD_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: understudy-secrets
+              key: RUNPOD_API_KEY
+        - name: RUNPOD_SSH_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: understudy-secrets
+              key: RUNPOD_SSH_PUBLIC_KEY
+        - name: RUNPOD_SSH_PRIVATE_KEY_PATH
+          value: "/app/keys/runpod_ssh_key"
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: understudy-secrets
+              key: HF_TOKEN
+        - name: BACKEND_URL
+          value: http://backend-service:8000
+        - name: K8S_IN_CLUSTER
+          value: "true"
+        - name: NAMESPACE
+          value: understudy
+        envFrom:
+        - configMapRef:
+            name: understudy-config
+        volumeMounts:
+        - name: temp-storage
+          mountPath: /app/model_weights
+        - name: ssh-keys-writable
+          mountPath: /app/keys
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+      volumes:
+      - name: temp-storage
+        emptyDir: {}
+      - name: ssh-keys
+        secret:
+          secretName: understudy-ssh-keys
+          defaultMode: 0600
+          items:
+          - key: RUNPOD_SSH_PRIVATE_KEY
+            path: runpod_ssh_key
+      - name: ssh-keys-writable
+        emptyDir: {}

@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     CHECKPOINTS_DIR: str = "./checkpoints"
     
     # Training
-    DEFAULT_BATCH_SIZE: int = 100
+    DEFAULT_TRAINING_SIZES: List = [10, 100, 1000]
     DEFAULT_LEARNING_RATE: float = 3e-4
     DEFAULT_NUM_EPOCHS: int = 3
     DEFAULT_LORA_R: int = 8
@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     
     # Monitoring
     LOG_LEVEL: str = "INFO"
-    LOG_FILE: str = "understudy.log"
+    LOG_FILE: str = os.getenv("LOG_FILE", "/tmp/understudy.log")
     
     class Config:
         env_file = ".env"

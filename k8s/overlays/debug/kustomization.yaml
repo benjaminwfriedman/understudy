@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: understudy
+
+# Include the base resources
+resources:
+  - ../../base
+
+# Include debug-specific patches
+patchesStrategicMerge:
+  - debug-deployment-patches.yaml
+  - debug-secrets.yaml
+
+# Add debug-specific configmap
+configMapGenerator:
+  - name: understudy-debug-config
+    literals:
+      - LOG_LEVEL=DEBUG
+      - DEBUG_MODE=true
+      - PYTHONUNBUFFERED=1
+      - FASTAPI_DEBUG=true
+      - HOT_RELOAD=true
+
+# Add prefix to distinguish debug deployments
+namePrefix: debug-
+
+# Add debug labels to all resources
+commonLabels:
+  environment: debug
+  debugging: enabled

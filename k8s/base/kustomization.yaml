@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: understudy
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - rbac.yaml
+  - pvc.yaml
+  - postgres.yaml
+  - redis.yaml
+  - backend.yaml
+  - frontend.yaml
+  - evaluation-service.yaml
+  - training-service.yaml
+  - model-broker.yaml

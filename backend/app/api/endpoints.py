@@ -43,6 +43,9 @@ except ImportError:
 from app.core.config import settings
 import logging
 import os
+import redis.asyncio as redis
+import ast
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +169,23 @@ async def inference(
             presence_penalty=request.presence_penalty,
             stop=request.stop
         )
+        
+        # Check for pending evaluations if this was an LLM inference
+        # (Only trigger when we're collecting unseen data for evaluation)
+        if result.get("model_used") == "llm":
+
+            
+
+            try:
+                from app.core.model_lifecycle import get_lifecycle_manager
+                lifecycle_manager = get_lifecycle_manager()
+                await lifecycle_manager.check_pending_evaluations(db, endpoint_id)
+                await lifecycle_manager.training_ready_or_needed(db, endpoint_id)
+
+            except Exception as eval_check_error:
+                # Don't fail the inference if evaluation check fails
+                logger.warning(f"Error checking pending evaluations for {endpoint_id}: {eval_check_error}")
+        
         return InferenceResponse(**result)
     except Exception as e:
         logger.error(f"Inference error: {e}")
@@ -231,20 +251,21 @@ async def start_training(
             training_data_parts.append(f"Q: {input_text}\nA: {output_text}")
         
         training_data = "\n\n".join(training_data_parts)
+        actual_examples_count = len(training_data_parts)
         
         # Create training configuration
         training_config = {
             "epochs": request.epochs,
             "batch_size": request.batch_size,
             "learning_rate": request.learning_rate,
-            "training_data": training_data
+            "training_data": training_data,
+            "training_pairs_count": actual_examples_count
         }
         
         # Add job to GPU queue
         job_id = await gpu_queue_manager.add_job(
             endpoint_id=endpoint_id,
             training_config=training_config,
-            priority=request.priority,
             provider=provider
         )
         
@@ -380,13 +401,11 @@ async def get_carbon_summary(
         .where(TrainingRun.endpoint_id == endpoint_id)
     ) or 0.0
     
-    # Inference emissions (SLM only)
+    # Inference emissions (SLM only) - using new CarbonEmission structure
     inference_emissions = await db.scalar(
         select(func.sum(CarbonEmission.emissions_kg))
-        .select_from(CarbonEmission)
-        .join(InferenceLog)
-        .where(InferenceLog.endpoint_id == endpoint_id)
-        .where(InferenceLog.model_used == "slm")
+        .where(CarbonEmission.endpoint_id == endpoint_id)
+        .where(CarbonEmission.event_type == "inference")
     ) or 0.0
     
     # Calculate avoided emissions
@@ -573,3 +592,76 @@ async def health_check(db: AsyncSession = Depends(get_db)):
         database=db_status,
         carbon_tracking=settings.CARBON_TRACKING_ENABLED
     )
+
+
+# Evaluation endpoints for SLM batch processing
+@router.get("/evaluation/{batch_id}/prompts")
+async def get_evaluation_prompts(batch_id: str):
+    """Get evaluation prompts for SLM batch processing."""
+    try:
+        # Initialize Redis client
+        redis_url = os.getenv("REDIS_URL", "redis://redis-service:6379")
+        redis_client = redis.from_url(redis_url)
+        
+        # Get evaluation context from Redis
+        context_data = await redis_client.get(f"evaluation_context:{batch_id}")
+        if not context_data:
+            raise HTTPException(status_code=404, detail="Evaluation batch not found")
+        
+        # Parse evaluation context
+        evaluation_context = ast.literal_eval(context_data.decode())
+        
+        await redis_client.close()
+        
+        return {
+            "prompts": evaluation_context["evaluation_inputs"],
+            "train_id": evaluation_context["train_id"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting evaluation prompts for {batch_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get evaluation prompts: {str(e)}")
+
+
+@router.post("/evaluation/{batch_id}/results")
+async def submit_evaluation_results(
+    batch_id: str,
+    results: dict
+):
+    """Receive evaluation results from SLM batch processing."""
+    try:
+        # Extract data from results
+        train_id = results.get("train_id")
+        slm_results = results.get("results", [])
+        
+        if not train_id or not slm_results:
+            raise HTTPException(status_code=400, detail="Missing required fields: train_id and results")
+        
+        # Extract just the response text from each result
+        slm_outputs = [result["response"] for result in slm_results]
+        
+        # Initialize lifecycle manager to handle completion
+        try:
+            from app.core.model_lifecycle import ModelLifecycleManager
+            from app.models.database import AsyncSessionLocal
+            
+            lifecycle_manager = ModelLifecycleManager()
+            await lifecycle_manager.initialize()
+            
+            # Create a database session directly
+            async with AsyncSessionLocal() as db:
+                result = await lifecycle_manager.handle_slm_batch_completion(
+                    db=db,
+                    train_id=train_id,
+                    slm_outputs=slm_outputs
+                )
+                
+                return {"status": "success", "result": result}
+                
+        except Exception as e:
+            logger.error(f"Error in lifecycle manager: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to process results: {str(e)}")
+        
+    except Exception as e:
+        logger.error(f"Error submitting evaluation results for {batch_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to submit results: {str(e)}")

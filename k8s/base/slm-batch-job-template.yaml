@@ -1,0 +1,74 @@
+# Template for SLM Batch Evaluation Jobs (created dynamically by Backend Service)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: slm-eval-{{train_id}}
+  namespace: understudy
+  labels:
+    mode: batch
+    train_id: "{{train_id}}"
+    endpoint_id: "{{endpoint_id}}"
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400  # Clean up after 24 hours
+  template:
+    metadata:
+      labels:
+        mode: batch
+        train_id: "{{train_id}}"
+        endpoint_id: "{{endpoint_id}}"
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+      - name: download-model
+        image: busybox:1.35
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            echo "Downloading model {{endpoint_id}}/v{{version}} for evaluation..."
+            wget -O /shared/model.safetensors \
+              "http://model-broker-service:8003/stream-model/{{endpoint_id}}/{{version}}" || exit 1
+            echo "Model download complete for evaluation"
+            ls -lh /shared/
+        volumeMounts:
+        - name: model-cache
+          mountPath: /shared
+      containers:
+      - name: slm-inference
+        image: bennyfriedman/understudy-slm-inference:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: understudy-secrets
+              key: HF_TOKEN
+        - name: MODEL_PATH
+          value: /models/model.safetensors
+        - name: EVAL_BATCH_ID
+          value: "{{batch_id}}"
+        - name: BACKEND_URL
+          value: http://backend-service:8000
+        - name: TRAIN_ID
+          value: "{{train_id}}"
+        - name: ENDPOINT_ID
+          value: "{{endpoint_id}}"
+        - name: MODEL_VERSION
+          value: "{{version}}"
+        - name: MODE
+          value: "batch"
+        - name: MODEL_BROKER_URL
+          value: "http://model-broker-service:8003"
+        volumeMounts:
+        - name: model-cache
+          mountPath: /models
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+      volumes:
+      - name: model-cache
+        emptyDir: {}

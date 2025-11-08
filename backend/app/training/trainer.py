@@ -248,7 +248,7 @@ class UnderstudyTrainer:
                 training_run.final_loss = train_result.training_loss
                 training_run.carbon_emissions_kg = emissions_data["emissions_kg"]
                 training_run.energy_consumed_kwh = emissions_data["energy_consumed_kwh"]
-                training_run.status = "completed"
+                training_run.phase = "completed"
                 
                 # Update endpoint with new model path
                 endpoint = await session.get(Endpoint, self.endpoint_id)
@@ -281,7 +281,7 @@ class UnderstudyTrainer:
                 training_run = await session.get(TrainingRun, training_run_id)
                 if training_run:
                     training_run.end_time = datetime.utcnow()
-                    training_run.status = "failed"
+                    training_run.phase = "failed"
                     training_run.error_message = str(e)
                     if carbon_tracker and emissions_data:
                         training_run.carbon_emissions_kg = emissions_data.get("emissions_kg", 0)

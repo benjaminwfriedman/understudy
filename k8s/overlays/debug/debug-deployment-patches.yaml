@@ -1,0 +1,186 @@
+# Debug patches for all deployments - enables debugging features
+# These should be ON for debug, OFF for production
+
+# Backend Debug Configuration
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: understudy
+spec:
+  replicas: 1  # DEBUG: Single replica for easier debugging
+  template:
+    spec:
+      containers:
+      - name: backend
+        # DEBUG: Enable remote debugging port
+        ports:
+        - containerPort: 8000
+          name: http
+        - containerPort: 5678
+          name: debug
+        
+        # DEBUG: Development command with debugpy
+        command: ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "--wait-for-client", "-m", "uvicorn"]
+        args: ["app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+        
+        # DEBUG: Environment variables
+        env:
+        - name: LOG_LEVEL
+          value: "DEBUG"
+        - name: DEBUG_MODE
+          value: "true"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: FASTAPI_DEBUG
+          value: "true"
+        
+        # DEBUG: Relaxed resource limits
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+        
+        # DEBUG: Disable health checks to avoid interference
+        livenessProbe: null
+        readinessProbe: null
+
+# Frontend Debug Configuration  
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: understudy
+spec:
+  replicas: 1  # DEBUG: Single replica
+  template:
+    spec:
+      containers:
+      - name: frontend
+        # DEBUG: Development mode
+        env:
+        - name: NODE_ENV
+          value: "development"
+        - name: REACT_APP_DEBUG
+          value: "true"
+        
+        # DEBUG: Relaxed resource limits
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+
+# Evaluation Service Debug Configuration
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evaluation-service
+  namespace: understudy
+spec:
+  replicas: 1  # DEBUG: Single replica
+  template:
+    spec:
+      containers:
+      - name: evaluation-service
+        # DEBUG: Enable remote debugging
+        ports:
+        - containerPort: 8001
+          name: http
+        - containerPort: 5679
+          name: debug
+        
+        # DEBUG: Development command with debugpy  
+        command: ["python", "-m", "debugpy", "--listen", "0.0.0.0:5679", "--wait-for-client", "-m", "uvicorn"]
+        args: ["main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+        
+        # DEBUG: Environment variables
+        env:
+        - name: LOG_LEVEL
+          value: "DEBUG"
+        - name: DEBUG_MODE
+          value: "true"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        
+        # DEBUG: Disable health checks
+        livenessProbe: null
+        readinessProbe: null
+
+# Training Service Debug Configuration  
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: training-service
+  namespace: understudy
+spec:
+  replicas: 1  # DEBUG: Single replica
+  template:
+    spec:
+      containers:
+      - name: training-service
+        # DEBUG: Enable remote debugging
+        ports:
+        - containerPort: 8002
+          name: http
+        - containerPort: 5680
+          name: debug
+        
+        # DEBUG: Development command with debugpy
+        command: ["python", "-m", "debugpy", "--listen", "0.0.0.0:5680", "--wait-for-client", "-m", "uvicorn"]  
+        args: ["main:app", "--host", "0.0.0.0", "--port", "8002", "--reload"]
+        
+        # DEBUG: Environment variables
+        env:
+        - name: LOG_LEVEL
+          value: "DEBUG"
+        - name: DEBUG_MODE
+          value: "true"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        
+        # DEBUG: Disable health checks
+        livenessProbe: null
+        readinessProbe: null
+
+# Model Broker Debug Configuration
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-broker
+  namespace: understudy
+spec:
+  replicas: 1  # DEBUG: Single replica
+  template:
+    spec:
+      containers:
+      - name: model-broker
+        # DEBUG: Enable remote debugging
+        ports:
+        - containerPort: 8003
+          name: http
+        - containerPort: 5681
+          name: debug
+        
+        # DEBUG: Environment variables  
+        env:
+        - name: LOG_LEVEL
+          value: "DEBUG"
+        - name: DEBUG_MODE
+          value: "true"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        
+        # DEBUG: Disable health checks
+        livenessProbe: null
+        readinessProbe: null
