@@ -13,6 +13,7 @@ Handles the training workflow:
 """
 
 import os
+import json
 import logging
 import asyncio
 from pathlib import Path
@@ -448,20 +449,79 @@ async def execute_training_job(train_id: str, endpoint_id: str, version: int, po
             download_success = await trainer.download_model_weights(pod_instance, train_id, model_path)
             
             if download_success:
+                # Calculate training wall time
+                training_info = await redis_client.hgetall(f"training:{train_id}")
+                # Redis returns bytes, so we need to decode or use byte keys
+                training_start_str = training_info.get(b"started_at")
+                if training_start_str:
+                    training_start_str = training_start_str.decode('utf-8')
+                logger.info(f"Retrieved training info: {training_info}")
+                logger.info(f"Training start string: {training_start_str}")
+                training_time_wall = None
+                if training_start_str:
+                    try:
+                        training_start = datetime.fromisoformat(training_start_str)
+                        training_end = datetime.now()
+                        training_time_wall = (training_end - training_start).total_seconds()
+                        logger.info(f"Training wall time: {training_time_wall:.2f} seconds")
+                    except Exception as e:
+                        logger.warning(f"Could not calculate training wall time: {e}")
+                else:
+                    logger.warning(f"No started_at timestamp found for training {train_id}")
+                
+                # Read training metrics from the downloaded model
+                metrics_path = Path(model_path) / "final_model" / "training_metrics.json"
+                training_metrics = {}
+                if metrics_path.exists():
+                    try:
+                        with open(metrics_path, 'r') as f:
+                            training_metrics = json.load(f)
+                        logger.info(f"Loaded training metrics: {training_metrics}")
+                    except Exception as e:
+                        logger.warning(f"Could not load training metrics: {e}")
+                
+                # Read carbon emissions from the downloaded model
+                carbon_path = Path(model_path) / "final_model" / "carbon_emissions.json"
+                carbon_emissions_kg = None
+                energy_consumed_kwh = None
+                if carbon_path.exists():
+                    try:
+                        with open(carbon_path, 'r') as f:
+                            carbon_data = json.load(f)
+                        carbon_emissions_kg = carbon_data.get("emissions_kg")
+                        logger.info(f"Loaded carbon emissions: {carbon_emissions_kg} kg CO2")
+                    except Exception as e:
+                        logger.warning(f"Could not load carbon emissions: {e}")
+                
                 # Store model in broker for persistent storage
                 logger.info(f"Storing model in broker for {endpoint_id}/v{version}")
                 broker_success = await store_model_in_broker(train_id, endpoint_id, version, model_path)
                 
                 if broker_success:
                     logger.info(f"Model successfully stored in broker")
+                    model_weights_path = f"{endpoint_id}/v{version}"
                 else:
                     logger.warning(f"Failed to store model in broker, but model download was successful")
+                    model_weights_path = None
                 
-                # Notify backend of completion
+                # Prepare completion data with all metrics (ensure JSON serializable)
+                completion_data = {
+                    "phase": "available",
+                    "training_loss": float(training_metrics.get("train_loss")) if training_metrics.get("train_loss") is not None else None,
+                    "model_weights_path": model_weights_path,
+                    "training_time_wall": float(training_time_wall) if training_time_wall is not None else None,
+                    "carbon_emissions_kg": float(carbon_emissions_kg) if carbon_emissions_kg is not None else None,
+                    "energy_consumed_kwh": float(energy_consumed_kwh) if energy_consumed_kwh is not None else None
+                }
+                
+                # Log the completion data for debugging
+                logger.info(f"Sending completion data: {completion_data}")
+                
+                # Notify backend of completion with metrics
                 async with httpx.AsyncClient() as client:
                     await client.post(
                         f"{BACKEND_URL}/api/v1/lifecycle/training/{train_id}/complete",
-                        json={"phase": "available"}
+                        json=completion_data
                     )
                 
                 await redis_client.hset(f"training:{train_id}", "status", "completed")
@@ -515,6 +575,9 @@ async def start_training(
 ):
     """Start a new training job"""
     logger.info(f"Received training request for {request.train_id}")
+    
+    # Record training start time
+    training_start_time = datetime.now()
     
     try:
         # TODO: Future provider support

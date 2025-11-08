@@ -251,13 +251,15 @@ async def start_training(
             training_data_parts.append(f"Q: {input_text}\nA: {output_text}")
         
         training_data = "\n\n".join(training_data_parts)
+        actual_examples_count = len(training_data_parts)
         
         # Create training configuration
         training_config = {
             "epochs": request.epochs,
             "batch_size": request.batch_size,
             "learning_rate": request.learning_rate,
-            "training_data": training_data
+            "training_data": training_data,
+            "training_pairs_count": actual_examples_count
         }
         
         # Add job to GPU queue

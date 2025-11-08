@@ -6,7 +6,7 @@ Endpoints for managing model lifecycle phases and distributed service coordinati
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 
 from app.models import get_db
@@ -21,6 +21,12 @@ router = APIRouter(prefix=f"{settings.API_V1_STR}/lifecycle", tags=["model-lifec
 
 class TrainingCompletionRequest(BaseModel):
     phase: str
+    training_loss: Optional[float] = None
+    model_weights_path: Optional[str] = None
+    training_metrics: Optional[Dict[str, Any]] = None
+    carbon_emissions_kg: Optional[float] = None
+    energy_consumed_kwh: Optional[float] = None
+    training_time_wall: Optional[float] = None
 
 
 class SimilarityScoreRequest(BaseModel):
@@ -49,7 +55,12 @@ async def training_complete(
         result = await lifecycle_manager.handle_training_completion(
             db=db,
             train_id=train_id,
-            phase=request.phase
+            phase=request.phase,
+            training_loss=request.training_loss,
+            model_weights_path=request.model_weights_path,
+            carbon_emissions_kg=request.carbon_emissions_kg,
+            energy_consumed_kwh=request.energy_consumed_kwh,
+            training_time_wall=request.training_time_wall
         )
         
         return {

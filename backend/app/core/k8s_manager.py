@@ -46,7 +46,7 @@ class K8sManager:
         endpoint_id: str,
         version: int,
         model_path: str,
-        deployment_threshold: float = 0.85
+        deployment_threshold: float = 0.95
     ) -> Dict[str, Any]:
         """Create a persistent SLM deployment for serving requests."""
         deployment_name = f"slm-{endpoint_id}-v{version}"
@@ -326,7 +326,12 @@ class K8sManager:
         model_path: str,
         mode: str = "endpoint"
     ) -> client.V1Deployment:
-        """Build deployment specification."""
+        """
+        Build deployment specification.
+
+        This defines the k8s spec for the slm deployment
+        
+        """
         labels = {
             "app": "slm-inference",
             "endpoint_id": endpoint_id,
@@ -483,7 +488,7 @@ class K8sManager:
         
         container = client.V1Container(
             name="slm-inference",
-            image="bennyfriedman/understudy-slm-inference:latest-amd64",
+            image="bennyfriedman/understudy-slm-inference:latest-arm64",
             image_pull_policy="Always",
             env=[
                 client.V1EnvVar(name="MODEL_PATH", value="/models"),
@@ -496,30 +501,15 @@ class K8sManager:
                 client.V1EnvVar(name="MODEL_BROKER_URL", value=self.model_broker_url),
                 client.V1EnvVar(name="HF_TOKEN", value=os.getenv("HF_TOKEN", ""))
             ],
-            volume_mounts=[
-                client.V1VolumeMount(
-                    name="model-store",
-                    mount_path="/models",
-                    read_only=True
-                )
-            ],
             resources=client.V1ResourceRequirements(
-                requests={"cpu": "2", "memory": "8Gi"},
-                limits={"cpu": "4", "memory": "16Gi"}
+                requests={"cpu": "1", "memory": "6Gi"},
+                limits={"cpu": "1", "memory": "6Gi"}
             )
         )
         
         pod_spec = client.V1PodSpec(
             restart_policy="Never",
-            containers=[container],
-            volumes=[
-                client.V1Volume(
-                    name="model-store",
-                    persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
-                        claim_name="model-weights-pvc"
-                    )
-                )
-            ]
+            containers=[container]
         )
         
         template = client.V1PodTemplateSpec(

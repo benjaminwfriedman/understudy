@@ -88,10 +88,8 @@ spec:
         - configMapRef:
             name: understudy-config
         volumeMounts:
-        - name: model-weights
+        - name: temp-storage
           mountPath: /app/model_weights
-        - name: training-data
-          mountPath: /app/data
         - name: ssh-keys-writable
           mountPath: /app/keys
         livenessProbe:
@@ -114,12 +112,8 @@ spec:
             cpu: "1000m"
             memory: "2Gi"
       volumes:
-      - name: model-weights
-        persistentVolumeClaim:
-          claimName: model-weights-pvc
-      - name: training-data
-        persistentVolumeClaim:
-          claimName: training-data-pvc
+      - name: temp-storage
+        emptyDir: {}
       - name: ssh-keys
         secret:
           secretName: understudy-ssh-keys

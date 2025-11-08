@@ -52,7 +52,7 @@ class ModelLifecycleManager:
         self.evaluation_service_url = os.getenv("EVALUATION_SERVICE_URL", "http://evaluation-service:8001")
         self.model_broker_url = os.getenv("MODEL_BROKER_SERVICE_URL", "http://model-broker-service:8003")
         self.redis_url = os.getenv("REDIS_URL", "redis://redis-service:6379")
-        self.deployment_threshold = float(os.getenv("DEPLOYMENT_THRESHOLD", "0.85"))
+        self.deployment_threshold = float(os.getenv("DEFAULT_SIMILARITY_THRESHOLD", "0.95"))
         
         # Initialize Redis client
         self.redis_client = None
@@ -85,16 +85,16 @@ class ModelLifecycleManager:
         except ValueError:
             logger.error(f"Invalid DEFAULT_EVALUATION_SAMPLE_SIZE: '{eval_sample_size}'. Must be an integer. Using default of 50.")
         
-        # Validate DEPLOYMENT_THRESHOLD
-        threshold = os.getenv("DEPLOYMENT_THRESHOLD", "0.85")
+        # Validate DEFAULT_SIMILARITY_THRESHOLD
+        threshold = os.getenv("DEFAULT_SIMILARITY_THRESHOLD", "0.95")
         try:
             thresh = float(threshold)
             if thresh < 0.0 or thresh > 1.0:
-                logger.warning(f"DEPLOYMENT_THRESHOLD {thresh} is outside valid range [0.0, 1.0]. Using default of 0.85.")
+                logger.warning(f"DEFAULT_SIMILARITY_THRESHOLD {thresh} is outside valid range [0.0, 1.0]. Using default of 0.95.")
             else:
-                logger.info(f"Using DEPLOYMENT_THRESHOLD: {thresh}")
+                logger.info(f"Using DEFAULT_SIMILARITY_THRESHOLD: {thresh}")
         except ValueError:
-            logger.error(f"Invalid DEPLOYMENT_THRESHOLD: '{threshold}'. Must be a float. Using default of 0.85.")
+            logger.error(f"Invalid DEFAULT_SIMILARITY_THRESHOLD: '{threshold}'. Must be a float. Using default of 0.95.")
     
     async def training_ready_or_needed(
             self,
@@ -150,7 +150,6 @@ class ModelLifecycleManager:
         db: AsyncSession,
         train_id: str,
         endpoint_id: str,
-        version: int,
         training_pairs_count: int,
         slm_type: str,
         source_llm: str,
@@ -163,16 +162,15 @@ class ModelLifecycleManager:
             from sqlalchemy import func
             
             # Auto-increment version if not provided
-            if version is None:
-                # Get the next version number for this endpoint
-                max_version = await db.scalar(
-                    select(func.max(TrainingRun.version))
-                    .where(TrainingRun.endpoint_id == endpoint_id)
-                    .where(TrainingRun.is_deleted == False)
-                ) or 0
-                version = max_version + 1
-                logger.info(f"Auto-assigned version {version} for endpoint {endpoint_id} (previous max: {max_version})")
-            
+           
+            # Get the next version number for this endpoint
+            max_version = await db.scalar(
+                select(func.max(TrainingRun.version))
+                .where(TrainingRun.endpoint_id == endpoint_id)
+            ) or 0
+            version = max_version + 1
+            logger.info(f"Auto-assigned version {version} for endpoint {endpoint_id} (previous max: {max_version})")
+        
             training_record = TrainingRun(
                 train_id=train_id,
                 endpoint_id=endpoint_id,
@@ -182,8 +180,7 @@ class ModelLifecycleManager:
                 source_llm=source_llm,
                 phase="training",
                 is_deleted=False,
-                start_time=datetime.now(),
-                examples_used=training_pairs_count  # Legacy field that maps to training_pairs_count
+                start_time=datetime.now()
             )
             
             db.add(training_record)
@@ -314,19 +311,64 @@ class ModelLifecycleManager:
         self,
         db: AsyncSession,
         train_id: str,
-        phase: str
+        phase: str,
+        training_loss: float = None,
+        model_weights_path: str = None,
+        carbon_emissions_kg: float = None,
+        energy_consumed_kwh: float = None,
+        training_time_wall: float = None
     ) -> Dict[str, Any]:
         """Handle training completion notification from Training Service."""
         try:
             logger.info(f"Training completed for {train_id} with phase: {phase}")
             
+            # Update the training run with the received metrics
+            update_values = {"phase": phase}
+            
+            if training_loss is not None:
+                update_values["training_loss"] = training_loss
+                logger.info(f"Setting training_loss to {training_loss} for {train_id}")
+            
+            if model_weights_path is not None:
+                update_values["model_weights_path"] = model_weights_path
+                logger.info(f"Setting model_weights_path to {model_weights_path} for {train_id}")
+            
+            if carbon_emissions_kg is not None:
+                update_values["carbon_emissions_kg"] = carbon_emissions_kg
+                logger.info(f"Setting carbon_emissions_kg to {carbon_emissions_kg} for {train_id}")
+            
+            if energy_consumed_kwh is not None:
+                update_values["energy_consumed_kwh"] = energy_consumed_kwh
+                logger.info(f"Setting energy_consumed_kwh to {energy_consumed_kwh} for {train_id}")
+            
+            if training_time_wall is not None:
+                update_values["training_time_wall"] = training_time_wall
+                logger.info(f"Setting training_time_wall to {training_time_wall} seconds for {train_id}")
+            
+            # Set end_time when training completes (regardless of success/failure)
+            if phase in ["available", "failed"]:
+                update_values["end_time"] = datetime.now()
+                logger.info(f"Setting end_time for completed training {train_id}")
+            
+            # Update the database
+            from sqlalchemy import update
+            from app.models.models import TrainingRun
+            
+            stmt = update(TrainingRun).where(
+                TrainingRun.train_id == train_id
+            ).values(**update_values)
+            
+            await db.execute(stmt)
+            await db.commit()
+            
             if phase == "available":
                 # Start evaluation workflow
                 await self._start_evaluation_workflow(db, train_id)
             elif phase == "failed":
-                await self._update_phase(db, train_id, "failed")
+                # Phase already updated above
+                pass
             
-            return {"status": "handled", "phase": phase}
+            return {"status": "handled", "phase": phase, "metrics_updated": len(update_values) > 1}
             
         except Exception as e:
             logger.error(f"Error handling training completion for {train_id}: {e}")
@@ -542,9 +584,9 @@ class ModelLifecycleManager:
             recent_inferences_result = await db.execute(recent_llm_inferences_stmt)
             recent_inferences = recent_inferences_result.scalars().all()
             
-            if len(recent_inferences) < evaluation_sample_size:
+            if len(recent_inferences) == 0 or len(recent_inferences) % evaluation_sample_size != 0:
                 # Not enough unseen data yet - set up monitoring for new inferences
-                still_needed = evaluation_sample_size - len(recent_inferences)
+                still_needed = evaluation_sample_size - (len(recent_inferences) % evaluation_sample_size) if len(recent_inferences) > 0 else evaluation_sample_size
                 logger.info(f"Insufficient unseen samples for {train_id}: {len(recent_inferences)}/{evaluation_sample_size} available. Still need {still_needed} more LLM inferences after {training_cutoff}.")
                 
                 # Store evaluation request in Redis for monitoring

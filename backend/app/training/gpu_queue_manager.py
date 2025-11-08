@@ -657,8 +657,7 @@ class GPUQueueManager:
                     db=db,
                     train_id=job.job_id,
                     endpoint_id=job.endpoint_id,
-                    version=training_config.get('version', 1),
-                    training_pairs_count=training_config.get('training_pairs_count', 100),
+                    training_pairs_count=training_config.get('training_pairs_count', len(training_data) if training_data else 0),
                     slm_type=training_config.get('slm_type', settings.BASE_MODEL_PATH),
                     source_llm=training_config.get('source_llm', 'gpt-3.5-turbo'),
                     training_data=training_data

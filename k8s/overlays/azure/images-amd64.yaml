@@ -8,7 +8,8 @@ spec:
     spec:
       containers:
       - name: backend
-        image: bennyfriedman/understudy-backend:latest-amd64
+        image: bennyfriedman/understudy-backend:latest-arm64
+        imagePullPolicy: Always
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -20,7 +21,8 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: bennyfriedman/understudy-frontend:latest-amd64
+        image: bennyfriedman/understudy-frontend:latest-arm64
+        imagePullPolicy: Always
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -32,7 +34,8 @@ spec:
     spec:
       containers:
       - name: evaluation-service
-        image: bennyfriedman/understudy-evaluation:latest-amd64
+        image: bennyfriedman/understudy-evaluation:latest-arm64
+        imagePullPolicy: Always
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -44,7 +47,8 @@ spec:
     spec:
       containers:
       - name: training-service
-        image: bennyfriedman/understudy-training:latest-amd64
+        image: bennyfriedman/understudy-training:latest-arm64
+        imagePullPolicy: Always
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -56,4 +60,5 @@ spec:
     spec:
       containers:
       - name: model-broker
-        image: bennyfriedman/understudy-model-broker:latest-amd64
+        image: bennyfriedman/understudy-model-broker:latest-arm64
+        imagePullPolicy: Always

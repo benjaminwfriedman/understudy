@@ -62,14 +62,17 @@ class TrainingRun(Base):
     endpoint_id = Column(String, ForeignKey("endpoints.id"), nullable=False)
     version = Column(Integer, nullable=False)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
+    start_time = Column(DateTime)  # When training actually starts
+    end_time = Column(DateTime)    # When training completes
     
     # Model configuration
     slm_type = Column(String, nullable=False)  # e.g., "Llama 3.2 1B"
     source_llm = Column(String, nullable=False)  # e.g., "gpt-3.5-turbo"
-    training_pairs_count = Column(Integer, nullable=False)
+    training_pairs_count = Column(Integer, nullable=False) # e.g., the dataset size
     
     # Training results
     training_loss = Column(Float)  # Final fine-tuning loss value
+    training_time_wall = Column(Float)  # Wall clock time in seconds from start to completion
     
     # Evaluation results
     semantic_similarity_score = Column(Float)  # Similarity score to source LLM
@@ -85,19 +88,12 @@ class TrainingRun(Base):
     # Soft delete
     is_deleted = Column(Boolean, default=False, nullable=False)
     
-    # Carbon tracking (keeping these as requested)
+    # Carbon tracking
     carbon_emissions_kg = Column(Float)  # From CodeCarbon
     energy_consumed_kwh = Column(Float)  # From CodeCarbon
     
-    # Legacy/compatibility fields (optional - can be removed after migration)
-    start_time = Column(DateTime)  # Maps to created_at
-    end_time = Column(DateTime)
-    examples_used = Column(Integer)  # Maps to training_pairs_count
-    final_loss = Column(Float)  # Maps to training_loss
+    # Error tracking
     error_message = Column(Text)
-    
-    # For legacy compatibility - keeping the id field as well initially
-    id = Column(String, default=generate_uuid)  # Can be removed after migration
     
     # Relationships
     endpoint = relationship("Endpoint", back_populates="training_runs")

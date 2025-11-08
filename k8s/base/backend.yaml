@@ -80,9 +80,6 @@ spec:
         envFrom:
         - configMapRef:
             name: understudy-config
-        volumeMounts:
-        - name: training-data
-          mountPath: /app/data
         livenessProbe:
           httpGet:
             path: /
@@ -97,12 +94,8 @@ spec:
           periodSeconds: 10
         resources:
           requests:
-            cpu: "500m"
+            cpu: "250m"
             memory: "1Gi"
           limits:
-            cpu: "2000m"
-            memory: "4Gi"
-      volumes:
-      - name: training-data
-        persistentVolumeClaim:
-          claimName: training-data-pvc
+            cpu: "500m"
+            memory: "2Gi"
