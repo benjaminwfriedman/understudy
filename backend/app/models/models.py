@@ -19,6 +19,7 @@ class Endpoint(Base):
     llm_model = Column(String, nullable=False)      # 'gpt-4', 'claude-3-sonnet', etc.
     slm_model_path = Column(String)                 # Path to trained SLM
     deployed_version = Column(Integer)              # Version of deployed TrainingRun
+    deployed_semantic_similarity = Column(Float)   # Semantic similarity of deployed model
     status = Column(String, nullable=False, default="training")  # 'training', 'ready', 'active'
     langchain_compatible = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
@@ -171,3 +172,24 @@ class EndpointConfig(Base):
     
     # Relationships
     endpoint = relationship("Endpoint", back_populates="config")
+
+
+class Comparison(Base):
+    __tablename__ = "comparisons"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    endpoint_id = Column(String, ForeignKey("endpoints.id"), nullable=False)
+    training_run_id = Column(String, ForeignKey("training_runs.train_id"), nullable=False)
+    input_text = Column(Text, nullable=False)
+    llm_output = Column(Text, nullable=False)
+    slm_output = Column(Text, nullable=False)
+    semantic_similarity_score = Column(Float)
+    llm_latency_ms = Column(Integer)
+    slm_latency_ms = Column(Integer)
+    llm_cost_usd = Column(Float)
+    slm_cost_usd = Column(Float)
+    created_at = Column(DateTime, server_default=func.now())
+    
+    # Relationships
+    endpoint = relationship("Endpoint", backref="comparisons")
+    training_run = relationship("TrainingRun", backref="comparisons")

@@ -58,15 +58,25 @@ export const ActivityFeed: React.FC = () => {
           const now = new Date();
           const timeAgo = new Date(endpoint.updated_at);
           const diffMs = now.getTime() - timeAgo.getTime();
-          const diffMins = Math.floor(diffMs / (1000 * 60));
           
           let timestamp: string;
-          if (diffMins < 60) {
-            timestamp = `${diffMins} minutes ago`;
-          } else if (diffMins < 1440) {
-            timestamp = `${Math.floor(diffMins / 60)} hours ago`;
+          // Handle future dates or invalid dates
+          if (diffMs < 0 || isNaN(diffMs)) {
+            timestamp = 'Recently';
           } else {
-            timestamp = `${Math.floor(diffMins / 1440)} days ago`;
+            const diffMins = Math.floor(diffMs / (1000 * 60));
+            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            
+            if (diffDays > 0) {
+              timestamp = `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
+            } else if (diffHours > 0) {
+              timestamp = `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+            } else if (diffMins > 0) {
+              timestamp = `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
+            } else {
+              timestamp = 'Just now';
+            }
           }
           
           let type: ActivityItem['type'];

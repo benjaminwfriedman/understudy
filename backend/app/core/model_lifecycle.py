@@ -473,12 +473,20 @@ class ModelLifecycleManager:
             if not current_model:
                 return {"status": "no_deployed_model"}
             
-            # Delete K8s deployment
+            # FIRST: Clear endpoint fields to stop routing traffic to SLM
+            from app.models.models import Endpoint
+            endpoint_stmt = update(Endpoint).where(
+                Endpoint.id == endpoint_id
+            ).values(
+                slm_model_path=None,
+                deployed_version=None,
+                deployed_semantic_similarity=None,
+                status="training"  # Revert to training status
+            )
+            await db.execute(endpoint_stmt)
+            
+            # Save the deployment name BEFORE we clear it
             deployment_name = current_model.k8s_deployment_name
-            if deployment_name:
-                success = self.k8s_manager.delete_slm_deployment(deployment_name)
-                if success:
-                    logger.info(f"Deleted deployment: {deployment_name}")
             
             # Update phase to available
             await self._update_phase(db, current_model.train_id, "available")
@@ -492,19 +500,19 @@ class ModelLifecycleManager:
             )
             await db.execute(stmt)
             
-            # Clear endpoint fields for routing
-            from app.models.models import Endpoint
-            endpoint_stmt = update(Endpoint).where(
-                Endpoint.id == endpoint_id
-            ).values(
-                slm_model_path=None,
-                deployed_version=None,
-                status="ready"
-            )
-            await db.execute(endpoint_stmt)
+            # Commit all database changes before deleting K8s resources
             await db.commit()
+            logger.info(f"Database updated - stopped routing to SLM for endpoint {endpoint_id}")
             
-            logger.info(f"Cleared endpoint {endpoint_id}: slm_model_path=None, deployed_version=None, status=ready")
+            # SECOND: Delete K8s deployment after database is updated
+            if deployment_name:
+                success = self.k8s_manager.delete_slm_deployment(deployment_name)
+                if success:
+                    logger.info(f"Deleted K8s deployment: {deployment_name}")
+                else:
+                    logger.warning(f"Failed to delete K8s deployment: {deployment_name}")
+            
+            logger.info(f"Reverted endpoint {endpoint_id}: slm_model_path=None, deployed_version=None, deployed_semantic_similarity=None, status=training")
             
             return {
                 "status": "undeployed",

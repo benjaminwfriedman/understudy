@@ -3,12 +3,14 @@ import { Link } from 'react-router-dom';
 import { apiService, Endpoint } from '../../services/api';
 
 interface EndpointRowProps {
+  id: string;
   name: string;
   status: 'active' | 'training' | 'ready';
   fromModel: string;
   toModel: string;
   similarity: number;
   examples: string;
+  trainingProgressPercent?: number;
   costSaved?: string;
   carbonSaved?: string;
   trainingProgress?: string;
@@ -16,12 +18,14 @@ interface EndpointRowProps {
 }
 
 const EndpointRow: React.FC<EndpointRowProps> = ({
+  id,
   name,
   status,
   fromModel,
   toModel,
   similarity,
   examples,
+  trainingProgressPercent,
   costSaved,
   carbonSaved,
   trainingProgress,
@@ -51,7 +55,10 @@ const EndpointRow: React.FC<EndpointRowProps> = ({
   const config = statusConfig[status];
 
   return (
-    <div className={`bg-white border border-gray-200 ${config.color} border-l-4 rounded-lg p-6 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200`}>
+    <Link 
+      to={`/endpoints/${id}`}
+      className={`block bg-white border border-gray-200 ${config.color} border-l-4 rounded-lg p-6 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200`}
+    >
       {/* Row 1: Title + Badge */}
       <div className="flex items-center justify-between mb-1">
         <h3 className="text-lg font-semibold text-gray-900">{name}</h3>
@@ -70,12 +77,31 @@ const EndpointRow: React.FC<EndpointRowProps> = ({
       <div className="flex items-center mb-3">
         <div className="w-96 bg-gray-200 rounded-full h-1.5 mr-3">
           <div 
-            className="bg-gradient-to-r from-blue-500 to-green-500 h-1.5 rounded-full transition-all duration-300"
-            style={{ width: `${similarity}%` }}
+            className={`h-1.5 rounded-full transition-all duration-300 ${
+              status === 'training' 
+                ? 'bg-gradient-to-r from-yellow-400 to-blue-500' 
+                : 'bg-gradient-to-r from-blue-500 to-green-500'
+            }`}
+            style={{ 
+              width: `${status === 'training' && trainingProgressPercent !== undefined 
+                ? trainingProgressPercent 
+                : similarity}%` 
+            }}
           />
         </div>
-        <span className="text-sm font-semibold text-gray-900 mr-2">{similarity}% similar</span>
-        <span className="text-sm text-gray-600">• {examples} examples</span>
+        {status === 'training' ? (
+          <>
+            <span className="text-sm font-semibold text-gray-900 mr-2">
+              {trainingProgressPercent !== undefined ? `${Math.round(trainingProgressPercent)}%` : '0%'} trained
+            </span>
+            <span className="text-sm text-gray-600">• {examples} examples</span>
+          </>
+        ) : (
+          <>
+            <span className="text-sm font-semibold text-gray-900 mr-2">{similarity}% similar</span>
+            <span className="text-sm text-gray-600">• {examples} examples</span>
+          </>
+        )}
       </div>
 
       {/* Row 4: Metrics or Status */}
@@ -108,13 +134,13 @@ const EndpointRow: React.FC<EndpointRowProps> = ({
           </button>
         )}
       </div>
-    </div>
+    </Link>
   );
 };
 
 export const RecentEndpoints: React.FC = () => {
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
-  const [endpointMetrics, setEndpointMetrics] = useState<Record<string, any>>({});
+  const [endpointData, setEndpointData] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -123,23 +149,35 @@ export const RecentEndpoints: React.FC = () => {
         const data = await apiService.getEndpoints();
         setEndpoints(data);
         
-        // Fetch metrics for each endpoint
-        const metricsPromises = data.map(async (endpoint) => {
+        // Fetch both metrics and examples for each endpoint
+        const dataPromises = data.map(async (endpoint) => {
           try {
-            const metrics = await apiService.getMetrics(endpoint.id);
-            return { [endpoint.id]: metrics };
+            const [metrics, examples] = await Promise.all([
+              apiService.getMetrics(endpoint.id).catch(() => null),
+              apiService.getExamples(endpoint.id, { limit: 1 }).catch(() => null)
+            ]);
+            return { 
+              [endpoint.id]: { 
+                metrics,
+                examples: examples ? {
+                  total: examples.total_count,
+                  trained: examples.trained_count,
+                  target: endpoint.config?.training_batch_size || 100
+                } : null
+              }
+            };
           } catch (error) {
-            console.error(`Failed to fetch metrics for ${endpoint.id}:`, error);
-            return { [endpoint.id]: null };
+            console.error(`Failed to fetch data for ${endpoint.id}:`, error);
+            return { [endpoint.id]: { metrics: null, examples: null } };
           }
         });
         
-        const metricsResults = await Promise.all(metricsPromises);
-        const metricsMap: Record<string, any> = {};
-        metricsResults.forEach(result => {
-          Object.assign(metricsMap, result);
+        const dataResults = await Promise.all(dataPromises);
+        const dataMap: Record<string, any> = {};
+        dataResults.forEach(result => {
+          Object.assign(dataMap, result);
         });
-        setEndpointMetrics(metricsMap);
+        setEndpointData(dataMap);
       } catch (error) {
         console.error('Failed to fetch endpoints:', error);
       } finally {
@@ -203,21 +241,42 @@ export const RecentEndpoints: React.FC = () => {
           </div>
         ) : (
           endpoints.map((endpoint) => {
-            const metrics = endpointMetrics[endpoint.id];
-            const similarity = metrics?.avg_similarity ? Math.round(metrics.avg_similarity * 100) : 0;
-            const totalInferences = metrics?.total_inferences || 0;
+            const data = endpointData[endpoint.id];
+            const examples = data?.examples;
+            
+            // Use deployed semantic similarity or calculate from examples
+            const similarity = endpoint.deployed_semantic_similarity 
+              ? Math.round(endpoint.deployed_semantic_similarity * 100)
+              : 0;
+            
+            // Show training examples count, not total inferences
+            const examplesText = examples 
+              ? `${examples.total}/${examples.target}` 
+              : '0/100';
+            
+            // Show actual training progress
+            const trainingProgress = examples && endpoint.status === 'training'
+              ? `${examples.total}/${examples.target} examples collected`
+              : undefined;
+              
+            // Calculate training progress percentage
+            const trainingProgressPercent = examples 
+              ? Math.min((examples.total / examples.target) * 100, 100)
+              : 0;
             
             return (
               <EndpointRow
                 key={endpoint.id}
+                id={endpoint.id}
                 name={endpoint.name}
                 status={mapStatus(endpoint.status)}
                 fromModel={endpoint.llm_model}
-                toModel={endpoint.slm_model_path || 'Llama 3.2 1B'}
+                toModel="Llama 3.2 1B"
                 similarity={similarity}
-                examples={totalInferences.toString()}
+                examples={examplesText}
+                trainingProgressPercent={trainingProgressPercent}
                 onActivate={endpoint.status === 'ready' ? () => handleActivate(endpoint.id) : undefined}
-                trainingProgress={endpoint.status === 'training' ? 'Training in progress...' : undefined}
+                trainingProgress={trainingProgress}
               />
             );
           })

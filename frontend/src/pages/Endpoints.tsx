@@ -4,11 +4,19 @@ import { Sidebar } from '../components/layout/Sidebar';
 import { TopBar } from '../components/layout/TopBar';
 import { apiService, Endpoint } from '../services/api';
 
-interface EndpointCardProps {
-  endpoint: Endpoint;
+interface EndpointStats {
+  examples_total: number;
+  examples_trained: number;
+  target_batch_size: number;
+  semantic_similarity?: number;
 }
 
-const EndpointCard: React.FC<EndpointCardProps> = ({ endpoint }) => {
+interface EndpointCardProps {
+  endpoint: Endpoint;
+  stats?: EndpointStats;
+}
+
+const EndpointCard: React.FC<EndpointCardProps> = ({ endpoint, stats }) => {
   const statusConfig = {
     active: {
       color: 'border-green-500',
@@ -59,8 +67,32 @@ const EndpointCard: React.FC<EndpointCardProps> = ({ endpoint }) => {
 
       {/* Model Info */}
       <div className="text-sm text-gray-500 mb-4">
-        {endpoint.llm_model} <span className="text-gray-400">→</span> {endpoint.slm_model_path || 'Llama 3.2 1B'}
+        {endpoint.llm_model} <span className="text-gray-400">→</span> Llama 3.2 1B
       </div>
+
+      {/* Training Progress & Stats */}
+      {stats && (
+        <div className="mb-4 space-y-2">
+          {/* Progress Bar */}
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-600">Training Progress</span>
+            <span className="text-gray-600">{stats.examples_total}/{stats.target_batch_size}</span>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div 
+              className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${Math.min((stats.examples_total / stats.target_batch_size) * 100, 100)}%` }}
+            />
+          </div>
+          
+          {/* Similarity Score */}
+          {stats.semantic_similarity && (
+            <div className="text-sm text-gray-600">
+              Similarity: <span className="font-medium text-gray-900">{Math.round(stats.semantic_similarity * 100)}%</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Metadata */}
       <div className="text-xs text-gray-500">
@@ -72,6 +104,7 @@ const EndpointCard: React.FC<EndpointCardProps> = ({ endpoint }) => {
 
 export const Endpoints: React.FC = () => {
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
+  const [endpointStats, setEndpointStats] = useState<Map<string, EndpointStats>>(new Map());
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -79,6 +112,32 @@ export const Endpoints: React.FC = () => {
       try {
         const data = await apiService.getEndpoints();
         setEndpoints(data);
+        
+        // Fetch stats for each endpoint
+        const statsPromises = data.map(async (endpoint) => {
+          try {
+            const examples = await apiService.getExamples(endpoint.id, { limit: 1 });
+            const stats: EndpointStats = {
+              examples_total: examples.total_count,
+              examples_trained: examples.trained_count,
+              target_batch_size: endpoint.config?.training_batch_size || 100,
+              semantic_similarity: endpoint.deployed_semantic_similarity || undefined
+            };
+            return { id: endpoint.id, stats };
+          } catch (error) {
+            console.error(`Failed to fetch stats for ${endpoint.id}:`, error);
+            return null;
+          }
+        });
+        
+        const statsResults = await Promise.all(statsPromises);
+        const statsMap = new Map();
+        statsResults.forEach(result => {
+          if (result) {
+            statsMap.set(result.id, result.stats);
+          }
+        });
+        setEndpointStats(statsMap);
       } catch (error) {
         console.error('Failed to fetch endpoints:', error);
       } finally {
@@ -145,7 +204,11 @@ export const Endpoints: React.FC = () => {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {endpoints.map((endpoint) => (
-                <EndpointCard key={endpoint.id} endpoint={endpoint} />
+                <EndpointCard 
+                  key={endpoint.id} 
+                  endpoint={endpoint} 
+                  stats={endpointStats.get(endpoint.id)}
+                />
               ))}
             </div>
           )}
