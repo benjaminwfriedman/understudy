@@ -2,26 +2,25 @@
 """
 SLM Inference Service
 
-Lightweight inference service that loads models from Model Broker and serves inference requests.
-Can run in two modes:
-1. Batch mode: Process evaluation batches and return results
-2. Endpoint mode: Serve real-time inference requests
+Lightweight inference service using llama.cpp for optimized CPU inference.
+Handles LoRA→GGUF conversion on startup before accepting traffic.
 """
 
 import os
 import logging
 import asyncio
 import json
+import subprocess
+import tempfile
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from pathlib import Path
 import httpx
 import redis.asyncio as redis
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from peft import PeftModel
+from llama_cpp import Llama
 
 # Configure logging
 logging.basicConfig(
@@ -43,9 +42,9 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://backend-service:8000")
 MODEL_BROKER_URL = os.getenv("MODEL_BROKER_URL", "http://model-broker-service:8003")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Global model and tokenizer
+# Global model
 model = None
-tokenizer = None
+model_ready = False
 
 
 class InferenceRequest(BaseModel):
@@ -82,105 +81,24 @@ app.add_middleware(
 )
 
 
-async def load_model():
-    """Load the model from Model Broker or local storage."""
-    global model, tokenizer
-    
-    try:
-        if ENDPOINT_ID and VERSION:
-            # Try to load from Model Broker first
-            model_path = await download_model_from_broker()
-            if not model_path:
-                # Fall back to local model path
-                model_path = f"{MODEL_PATH}/{ENDPOINT_ID}/v{VERSION}"
-        else:
-            # Use default model path
-            model_path = MODEL_PATH
-        
-        logger.info(f"Loading model from: {model_path}")
-        
-        # Check if this is a LoRA adapter by looking for adapter_config.json
-        adapter_config_path = f"{model_path}/adapter_config.json"
-        is_lora_adapter = os.path.exists(adapter_config_path)
-        
-        if is_lora_adapter:
-            logger.info("Detected LoRA adapter, loading base model + adapter")
-            
-            # Read adapter config to get base model
-            with open(adapter_config_path, 'r') as f:
-                adapter_config = json.load(f)
-            
-            base_model_name = adapter_config.get("base_model_name_or_path")
-            if not base_model_name:
-                raise Exception("LoRA adapter config missing base_model_name_or_path")
-            
-            logger.info(f"Loading base model: {base_model_name}")
-            
-            # Load base model and tokenizer
-            tokenizer = AutoTokenizer.from_pretrained(
-                base_model_name,
-                token=HF_TOKEN if HF_TOKEN else None
-            )
-            base_model = AutoModelForCausalLM.from_pretrained(
-                base_model_name,
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                device_map="auto" if torch.cuda.is_available() else None,
-                token=HF_TOKEN if HF_TOKEN else None
-            )
-            
-            # Load LoRA adapter
-            logger.info(f"Loading LoRA adapter from: {model_path}")
-            model = PeftModel.from_pretrained(base_model, model_path)
-            
-            # Ensure pad token is set
-            if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token
-            
-            logger.info("LoRA model loaded successfully")
-            
-        else:
-            logger.info("Loading full model")
-            # Load tokenizer and model normally
-            tokenizer = AutoTokenizer.from_pretrained(model_path)
-            model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                device_map="auto" if torch.cuda.is_available() else None
-            )
-            logger.info("Full model loaded successfully")
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"Failed to load model: {e}")
-        return False
-
-
 async def download_model_from_broker() -> Optional[str]:
     """Download model from Model Broker if needed."""
     try:
         # Check if model exists locally
-        local_path = f"{MODEL_PATH}/{ENDPOINT_ID}/v{VERSION}"
+        local_path = f"/models/{ENDPOINT_ID}/v{VERSION}"
         
         # Check for LoRA adapter files
         lora_files = ["adapter_config.json", "adapter_model.safetensors"]
         is_lora = all(os.path.exists(f"{local_path}/{file}") for file in lora_files)
         
-        # Check for common Hugging Face model files
-        required_files = ["config.json", "pytorch_model.bin"]
-        model_exists = all(os.path.exists(f"{local_path}/{file}") for file in required_files)
+        # Check for GGUF files (preferred)
+        gguf_files = list(Path(local_path).glob("*.gguf"))
+        if gguf_files:
+            logger.info(f"GGUF model already exists: {gguf_files[0]}")
+            return str(gguf_files[0])
         
-        # Also check for safetensors format
-        if not model_exists:
-            safetensors_files = ["config.json", "model.safetensors"]
-            model_exists = all(os.path.exists(f"{local_path}/{file}") for file in safetensors_files)
-        
-        # For LoRA adapters, we only need the adapter files
         if is_lora:
-            model_exists = True
-        
-        if model_exists:
-            logger.info(f"Model already exists locally: {local_path}")
+            logger.info(f"LoRA model already exists locally: {local_path}")
             return local_path
         
         # Download from Model Broker
@@ -213,7 +131,6 @@ async def download_model_from_broker() -> Optional[str]:
                     # Handle LoRA adapter tar.gz
                     logger.info("Downloading LoRA adapter archive")
                     import tarfile
-                    import tempfile
                     
                     # Download to temp file
                     with tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False) as tmp_file:
@@ -275,40 +192,199 @@ async def download_model_from_broker() -> Optional[str]:
         return None
 
 
+async def convert_lora_to_gguf(lora_path: str) -> str:
+    """Convert LoRA adapter to GGUF format for llama.cpp."""
+    try:
+        logger.info(f"Converting LoRA to GGUF: {lora_path}")
+        
+        # Read adapter config
+        with open(f"{lora_path}/adapter_config.json", 'r') as f:
+            adapter_config = json.load(f)
+        
+        base_model_name = adapter_config.get("base_model_name_or_path")
+        if not base_model_name:
+            raise Exception("LoRA adapter config missing base_model_name_or_path")
+        
+        # Output GGUF path
+        gguf_path = f"{lora_path}/model-q4_k_m.gguf"
+        
+        if os.path.exists(gguf_path):
+            logger.info(f"GGUF already exists: {gguf_path}")
+            return gguf_path
+        
+        # Create conversion script
+        conversion_script = f"""
+import sys
+import os
+sys.path.append('/app')
+
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
+import torch
+
+# Load base model and tokenizer
+print("Loading base model...")
+tokenizer = AutoTokenizer.from_pretrained(
+    "{base_model_name}",
+    token="{HF_TOKEN}" if "{HF_TOKEN}" else None
+)
+base_model = AutoModelForCausalLM.from_pretrained(
+    "{base_model_name}",
+    torch_dtype=torch.float16,
+    device_map="cpu",
+    token="{HF_TOKEN}" if "{HF_TOKEN}" else None
+)
+
+# Load LoRA adapter
+print("Loading LoRA adapter...")
+model = PeftModel.from_pretrained(base_model, "{lora_path}")
+
+# Merge adapter
+print("Merging LoRA adapter...")
+merged_model = model.merge_and_unload()
+
+# Save merged model
+temp_path = "{lora_path}/merged_model"
+print(f"Saving merged model to {{temp_path}}")
+merged_model.save_pretrained(temp_path)
+tokenizer.save_pretrained(temp_path)
+
+print("Conversion complete")
+"""
+        
+        # Write and execute conversion script
+        script_path = f"{lora_path}/convert.py"
+        with open(script_path, 'w') as f:
+            f.write(conversion_script)
+        
+        # Run conversion
+        logger.info("Running LoRA merge...")
+        result = subprocess.run([
+            "python", script_path
+        ], capture_output=True, text=True, cwd=lora_path)
+        
+        if result.returncode != 0:
+            raise Exception(f"LoRA merge failed: {result.stderr}")
+        
+        # Convert to GGUF using llama.cpp tools
+        logger.info("Converting merged model to GGUF F16...")
+        merged_path = f"{lora_path}/merged_model"
+        gguf_f16_path = f"{lora_path}/model-f16.gguf"
+        
+        # First convert HF model to F16 GGUF
+        convert_cmd = [
+            "python", "/opt/llama.cpp/convert_hf_to_gguf.py", 
+            merged_path,
+            "--outfile", gguf_f16_path,
+            "--outtype", "f16"
+        ]
+        
+        result = subprocess.run(convert_cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            raise Exception(f"GGUF F16 conversion failed: {result.stderr}")
+        
+        # Then quantize to Q4_K_M
+        logger.info("Quantizing to Q4_K_M...")
+        quantize_cmd = [
+            "/opt/llama.cpp/build/bin/llama-quantize",
+            gguf_f16_path,
+            gguf_path,
+            "Q4_K_M"
+        ]
+        
+        result = subprocess.run(quantize_cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            raise Exception(f"GGUF quantization failed: {result.stderr}")
+        
+        logger.info(f"GGUF conversion complete: {gguf_path}")
+        
+        # Cleanup temporary files
+        import shutil
+        shutil.rmtree(merged_path, ignore_errors=True)
+        os.remove(script_path)
+        
+        return gguf_path
+        
+    except Exception as e:
+        logger.error(f"LoRA to GGUF conversion failed: {e}")
+        raise
+
+
+async def load_model():
+    """Load model with llama.cpp."""
+    global model, model_ready
+    
+    try:
+        logger.info("Starting model loading process...")
+        
+        if ENDPOINT_ID and VERSION:
+            model_path = await download_model_from_broker()
+            if not model_path:
+                raise Exception("Failed to download model")
+        else:
+            model_path = "/models"
+        
+        # Check if this is a LoRA adapter
+        if os.path.isdir(model_path) and os.path.exists(f"{model_path}/adapter_config.json"):
+            logger.info("Detected LoRA adapter, converting to GGUF...")
+            gguf_path = await convert_lora_to_gguf(model_path)
+        else:
+            # Look for existing GGUF files
+            if os.path.isdir(model_path):
+                gguf_files = list(Path(model_path).glob("*.gguf"))
+                if gguf_files:
+                    gguf_path = str(gguf_files[0])
+                else:
+                    raise Exception(f"No GGUF files found in {model_path}")
+            else:
+                gguf_path = model_path
+        
+        logger.info(f"Loading GGUF model: {gguf_path}")
+        
+        # Load with llama.cpp
+        model = Llama(
+            model_path=gguf_path,
+            n_ctx=2048,  # Context window
+            n_batch=512,  # Batch size
+            n_threads=None,  # Use all available CPU threads
+            verbose=False
+        )
+        
+        model_ready = True
+        logger.info("Model loaded successfully with llama.cpp")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to load model: {e}")
+        model_ready = False
+        return False
+
+
 async def generate_text(prompt: str, max_tokens: int = 100, temperature: float = 0.7) -> Dict[str, Any]:
-    """Generate text using the loaded model."""
-    if not model or not tokenizer:
+    """Generate text using llama.cpp."""
+    if not model or not model_ready:
         raise HTTPException(status_code=500, detail="Model not loaded")
     
     start_time = datetime.now()
     
     try:
-        # Tokenize input
-        inputs = tokenizer(prompt, return_tensors="pt")
+        # Generate with llama.cpp
+        output = model(
+            prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            echo=False,  # Don't include prompt in output
+            stop=["\n\n", "</s>", "<|endoftext|>"]
+        )
         
-        # Generate
-        with torch.no_grad():
-            outputs = model.generate(
-                inputs.input_ids,
-                max_new_tokens=max_tokens,
-                temperature=temperature,
-                do_sample=True,
-                pad_token_id=tokenizer.eos_token_id
-            )
-        
-        # Decode output
-        generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        
-        # Remove the original prompt from the output
-        if generated_text.startswith(prompt):
-            generated_text = generated_text[len(prompt):]
-        
+        generated_text = output['choices'][0]['text']
         processing_time = (datetime.now() - start_time).total_seconds()
-        tokens_generated = len(outputs[0]) - len(inputs.input_ids[0])
         
         return {
             "text": generated_text.strip(),
-            "tokens_generated": tokens_generated,
+            "tokens_generated": len(output['choices'][0]['text'].split()),
             "processing_time": processing_time
         }
         
@@ -327,9 +403,6 @@ async def startup_event():
     if not success:
         logger.error("Failed to load model during startup")
         raise RuntimeError("Model loading failed")
-    
-    # In web server mode, just load the model and be ready for requests
-    # Batch mode is handled directly in __main__
 
 
 async def process_evaluation_batch():
@@ -416,7 +489,7 @@ async def root():
         "mode": MODE,
         "endpoint_id": ENDPOINT_ID,
         "version": VERSION,
-        "model_loaded": model is not None,
+        "model_loaded": model_ready,
         "timestamp": datetime.now().isoformat()
     }
 
@@ -425,8 +498,8 @@ async def root():
 async def health():
     """Health check endpoint."""
     return {
-        "status": "healthy",
-        "model_loaded": model is not None
+        "status": "healthy" if model_ready else "loading",
+        "model_loaded": model_ready
     }
 
 
@@ -502,14 +575,14 @@ async def model_info():
         "version": VERSION,
         "model_path": MODEL_PATH,
         "mode": MODE,
-        "model_loaded": model is not None,
-        "device": str(next(model.parameters()).device) if model else None
+        "model_loaded": model_ready,
+        "device": "cpu"
     }
 
 
 async def run_batch_evaluation():
     """Run batch evaluation directly."""
-    global model, tokenizer
+    global model
     
     logger.info("Loading model for batch evaluation...")
     success = await load_model()
