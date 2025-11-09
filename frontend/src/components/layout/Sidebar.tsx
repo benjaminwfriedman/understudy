@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { 
   HomeIcon, 
@@ -10,6 +10,7 @@ import {
   MoonIcon
 } from '@heroicons/react/20/solid';
 import { BoltIcon } from '@heroicons/react/20/solid';
+import { apiService } from '../../services/api';
 
 interface NavItem {
   name: string;
@@ -19,16 +20,30 @@ interface NavItem {
   badge?: number;
 }
 
-const navigation: NavItem[] = [
-  { name: 'Dashboard', href: '/', icon: HomeIcon, current: true },
-  { name: 'Endpoints', href: '/endpoints', icon: CpuChipIcon, badge: 12 },
-  { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
-  { name: 'Carbon Impact', href: '/carbon', icon: BeakerIcon },
-  { name: 'Settings', href: '/settings', icon: CogIcon },
-];
-
 export const Sidebar: React.FC = () => {
   const location = useLocation();
+  const [endpointCount, setEndpointCount] = useState<number>(0);
+
+  useEffect(() => {
+    const fetchEndpointCount = async () => {
+      try {
+        const endpoints = await apiService.getEndpoints();
+        setEndpointCount(endpoints.length);
+      } catch (error) {
+        console.error('Failed to fetch endpoint count:', error);
+      }
+    };
+
+    fetchEndpointCount();
+  }, []);
+
+  const navigation: NavItem[] = [
+    { name: 'Dashboard', href: '/', icon: HomeIcon, current: true },
+    { name: 'Endpoints', href: '/endpoints', icon: CpuChipIcon, badge: endpointCount },
+    { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
+    { name: 'Carbon Impact', href: '/carbon', icon: BeakerIcon },
+    { name: 'Settings', href: '/settings', icon: CogIcon },
+  ];
 
   return (
     <div className="fixed inset-y-0 left-0 w-60 bg-white border-r border-gray-200">

@@ -24,6 +24,21 @@ class EndpointCreate(BaseModel):
     config: Optional[EndpointConfigCreate] = None
 
 
+class EndpointConfigResponse(BaseModel):
+    training_batch_size: int
+    similarity_threshold: float
+    auto_switchover: bool
+    lora_r: int
+    lora_alpha: int
+    learning_rate: float
+    track_carbon: bool
+    max_training_examples: int
+    training_frequency_hours: int
+    
+    class Config:
+        from_attributes = True
+
+
 class EndpointResponse(BaseModel):
     id: str
     name: str
@@ -31,10 +46,13 @@ class EndpointResponse(BaseModel):
     llm_provider: str
     llm_model: str
     slm_model_path: Optional[str]
+    deployed_version: Optional[int]
+    deployed_semantic_similarity: Optional[float]
     status: str
     langchain_compatible: bool
     created_at: datetime
     updated_at: datetime
+    config: Optional[EndpointConfigResponse] = None
     
     class Config:
         from_attributes = True
@@ -79,15 +97,40 @@ class TrainingResponse(BaseModel):
 
 
 class TrainingRunResponse(BaseModel):
-    id: str
+    train_id: str
     endpoint_id: str
-    start_time: datetime
+    version: int
+    created_at: datetime
+    start_time: Optional[datetime]
     end_time: Optional[datetime]
-    examples_used: Optional[int]
-    final_loss: Optional[float]
-    status: str
+    slm_type: str
+    source_llm: str
+    training_pairs_count: int
+    training_loss: Optional[float]
+    training_time_wall: Optional[float]
+    semantic_similarity_score: Optional[float]
+    phase: str
     carbon_emissions_kg: Optional[float]
     energy_consumed_kwh: Optional[float]
+    
+    class Config:
+        from_attributes = True
+
+
+# Comparison schemas
+class ComparisonResponse(BaseModel):
+    id: str
+    endpoint_id: str
+    training_run_id: str
+    input_text: str
+    llm_output: str
+    slm_output: str
+    semantic_similarity_score: Optional[float]
+    llm_latency_ms: Optional[int]
+    slm_latency_ms: Optional[int]
+    llm_cost_usd: Optional[float]
+    slm_cost_usd: Optional[float]
+    created_at: datetime
     
     class Config:
         from_attributes = True
@@ -113,6 +156,8 @@ class MetricsSummary(BaseModel):
     slm_inferences: int
     total_cost_saved: float
     avg_latency_reduction_ms: float
+    llm_avg_cost: Optional[float] = None
+    slm_avg_cost: Optional[float] = None
 
 
 # Carbon schemas

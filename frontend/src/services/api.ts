@@ -1,5 +1,17 @@
 const API_BASE_URL = '/api/v1';
 
+export interface EndpointConfig {
+  training_batch_size: number;
+  similarity_threshold: number;
+  auto_switchover: boolean;
+  lora_r: number;
+  lora_alpha: number;
+  learning_rate: number;
+  track_carbon: boolean;
+  max_training_examples: number;
+  training_frequency_hours: number;
+}
+
 export interface Endpoint {
   id: string;
   name: string;
@@ -7,20 +19,31 @@ export interface Endpoint {
   llm_provider: string;
   llm_model: string;
   slm_model_path: string | null;
+  deployed_version: number | null;
+  deployed_semantic_similarity: number | null;
   status: 'training' | 'active' | 'ready' | 'failed';
   langchain_compatible: boolean;
   created_at: string;
   updated_at: string;
+  config: EndpointConfig | null;
 }
 
 export interface TrainingRun {
-  id: string;
+  train_id: string;
   endpoint_id: string;
-  status: string;
-  progress: number;
-  examples_count: number;
+  version: number;
   created_at: string;
-  updated_at: string;
+  start_time: string | null;
+  end_time: string | null;
+  slm_type: string;
+  source_llm: string;
+  training_pairs_count: number;
+  training_loss: number | null;
+  training_time_wall: number | null;
+  semantic_similarity_score: number | null;
+  phase: string;
+  carbon_emissions_kg: number | null;
+  energy_consumed_kwh: number | null;
 }
 
 export interface CarbonSummary {
@@ -37,6 +60,8 @@ export interface Metrics {
   slm_inferences: number;
   total_cost_saved: number;
   avg_latency_reduction_ms: number;
+  llm_avg_cost?: number;
+  slm_avg_cost?: number;
 }
 
 export interface Example {
@@ -57,6 +82,21 @@ export interface ExamplesResponse {
   total_count: number;
   trained_count: number;
   pending_count: number;
+}
+
+export interface Comparison {
+  id: string;
+  endpoint_id: string;
+  training_run_id: string;
+  input_text: string;
+  llm_output: string;
+  slm_output: string;
+  semantic_similarity_score: number | null;
+  llm_latency_ms: number | null;
+  slm_latency_ms: number | null;
+  llm_cost_usd: number | null;
+  slm_cost_usd: number | null;
+  created_at: string;
 }
 
 class ApiService {
@@ -113,6 +153,31 @@ class ApiService {
     }
   }
 
+  async revertToLLM(endpointId: string): Promise<void> {
+    // This undeploys the SLM deployment, not the endpoint itself
+    const response = await fetch(`${API_BASE_URL}/lifecycle/endpoints/${endpointId}/deployment`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+  }
+
+  async deployModel(trainId: string): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/lifecycle/models/${trainId}/deploy`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+  }
+
   async getExamples(
     endpointId: string,
     options?: {
@@ -132,6 +197,23 @@ class ApiService {
     const endpoint = `/endpoints/${endpointId}/examples${queryString ? `?${queryString}` : ''}`;
     
     return this.fetch<ExamplesResponse>(endpoint);
+  }
+
+  async getComparisons(
+    endpointId: string,
+    options?: {
+      skip?: number;
+      limit?: number;
+    }
+  ): Promise<Comparison[]> {
+    const params = new URLSearchParams();
+    if (options?.skip !== undefined) params.append('skip', options.skip.toString());
+    if (options?.limit !== undefined) params.append('limit', options.limit.toString());
+
+    const queryString = params.toString();
+    const endpoint = `/endpoints/${endpointId}/comparisons${queryString ? `?${queryString}` : ''}`;
+    
+    return this.fetch<Comparison[]>(endpoint);
   }
 }
 

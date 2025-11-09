@@ -200,7 +200,7 @@ export const NewEndpoint: React.FC = () => {
                     <ul className="list-disc list-inside space-y-1">
                       <li>Your endpoint will be created and ready for training data</li>
                       <li>Start collecting examples by making API calls to your endpoint</li>
-                      <li>Training will begin automatically after 100 examples</li>
+                      <li>Training will begin automatically after reaching the configured batch size</li>
                       <li>Your SLM will be ready in ~15 minutes after training completes</li>
                     </ul>
                   </div>

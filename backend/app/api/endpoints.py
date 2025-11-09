@@ -6,13 +6,13 @@ from datetime import datetime, timedelta
 
 from app.models import (
     get_db, Endpoint, EndpointConfig, InferenceLog,
-    TrainingRun, Metric, CarbonEmission
+    TrainingRun, Metric, CarbonEmission, Comparison
 )
 from app.api.schemas import (
     EndpointCreate, EndpointResponse, InferenceRequest, InferenceResponse,
     TrainingRequest, TrainingResponse, TrainingRunResponse, MetricResponse,
     MetricsSummary, CarbonSummary, CarbonTimeline, HealthResponse,
-    ExampleResponse, ExamplesListResponse
+    ExampleResponse, ExamplesListResponse, ComparisonResponse
 )
 try:
     from app.core.inference_router import InferenceRouter
@@ -89,6 +89,9 @@ async def create_endpoint(
     await db.commit()
     await db.refresh(endpoint)
     
+    # Load the config relationship
+    await db.refresh(endpoint, ["config"])
+    
     return endpoint
 
 
@@ -98,14 +101,20 @@ async def list_endpoints(
     limit: int = 100,
     db: AsyncSession = Depends(get_db)
 ):
-    """List all endpoints."""
+    """List all endpoints with configs."""
     result = await db.execute(
         select(Endpoint)
         .offset(skip)
         .limit(limit)
         .order_by(Endpoint.created_at.desc())
     )
-    return result.scalars().all()
+    endpoints = result.scalars().all()
+    
+    # Load config for each endpoint
+    for endpoint in endpoints:
+        await db.refresh(endpoint, ["config"])
+    
+    return endpoints
 
 
 @router.get("/endpoints/{endpoint_id}", response_model=EndpointResponse)
@@ -113,10 +122,17 @@ async def get_endpoint(
     endpoint_id: str,
     db: AsyncSession = Depends(get_db)
 ):
-    """Get a specific endpoint."""
-    endpoint = await db.get(Endpoint, endpoint_id)
+    """Get a specific endpoint with config."""
+    stmt = select(Endpoint).where(Endpoint.id == endpoint_id)
+    result = await db.execute(stmt)
+    endpoint = result.scalar_one_or_none()
+    
     if not endpoint:
         raise HTTPException(status_code=404, detail="Endpoint not found")
+    
+    # Load the config
+    await db.refresh(endpoint, ["config"])
+    
     return endpoint
 
 
@@ -315,6 +331,24 @@ async def get_training_runs(
     return result.scalars().all()
 
 
+@router.get("/endpoints/{endpoint_id}/comparisons", response_model=List[ComparisonResponse])
+async def get_comparisons(
+    endpoint_id: str,
+    skip: int = 0,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get LLM vs SLM comparisons for an endpoint."""
+    result = await db.execute(
+        select(Comparison)
+        .where(Comparison.endpoint_id == endpoint_id)
+        .order_by(Comparison.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
 # Metrics
 @router.get("/metrics/{endpoint_id}", response_model=MetricsSummary)
 async def get_metrics_summary(
@@ -349,16 +383,23 @@ async def get_metrics_summary(
     
     slm_inferences = total_inferences - llm_inferences
     
-    # Calculate cost savings
-    total_cost_saved = await db.scalar(
-        select(func.sum(InferenceLog.cost_usd))
+    # Calculate average costs for LLM and SLM
+    llm_avg_cost = await db.scalar(
+        select(func.avg(InferenceLog.cost_usd))
         .where(InferenceLog.endpoint_id == endpoint_id)
         .where(InferenceLog.model_used == "llm")
         .where(InferenceLog.created_at >= start_date)
     ) or 0.0
     
-    # Subtract SLM costs (estimated)
-    total_cost_saved -= slm_inferences * 0.0001
+    slm_avg_cost = await db.scalar(
+        select(func.avg(InferenceLog.cost_usd))
+        .where(InferenceLog.endpoint_id == endpoint_id)
+        .where(InferenceLog.model_used == "slm")
+        .where(InferenceLog.created_at >= start_date)
+    ) or 0.0001  # Default to small value if no SLM data yet
+    
+    # Calculate total cost saved (for backward compatibility)
+    total_cost_saved = (llm_avg_cost - slm_avg_cost) * slm_inferences if slm_inferences > 0 else 0
     
     # Calculate latency reduction
     llm_avg_latency = await db.scalar(
@@ -384,7 +425,9 @@ async def get_metrics_summary(
         llm_inferences=llm_inferences,
         slm_inferences=slm_inferences,
         total_cost_saved=float(total_cost_saved),
-        avg_latency_reduction_ms=float(avg_latency_reduction)
+        avg_latency_reduction_ms=float(avg_latency_reduction),
+        llm_avg_cost=float(llm_avg_cost) if llm_avg_cost else None,
+        slm_avg_cost=float(slm_avg_cost) if slm_avg_cost else None
     )
 
 

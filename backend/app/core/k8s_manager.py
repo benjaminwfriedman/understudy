@@ -176,18 +176,32 @@ class K8sManager:
             logger.info(f"Deleted deployment: {deployment_name}")
             
             # Delete associated service
-            service_name = deployment_name.replace("slm-", "slm-").replace("-v", "-svc")
+            # Extract endpoint_id from deployment name: slm-{endpoint_id}-v{version}
+            if deployment_name.startswith("slm-") and "-v" in deployment_name:
+                endpoint_part = deployment_name[4:]  # Remove "slm-" prefix
+                endpoint_id = endpoint_part.rsplit("-v", 1)[0]  # Remove version suffix
+                service_name = f"slm-{endpoint_id}-svc"
+            else:
+                service_name = deployment_name.replace("-v", "-svc")  # Fallback
+            
             try:
                 self.core_v1.delete_namespaced_service(
                     name=service_name,
                     namespace=self.namespace
                 )
                 logger.info(f"Deleted service: {service_name}")
-            except ApiException:
+            except ApiException as e:
+                if e.status != 404:  # Don't log if service doesn't exist
+                    logger.warning(f"Failed to delete service {service_name}: {e}")
                 pass  # Service might not exist
             
             # Delete HPA
-            hpa_name = deployment_name.replace("slm-", "slm-").replace("-v", "-hpa")
+            if deployment_name.startswith("slm-") and "-v" in deployment_name:
+                endpoint_part = deployment_name[4:]  # Remove "slm-" prefix
+                endpoint_id = endpoint_part.rsplit("-v", 1)[0]  # Remove version suffix
+                hpa_name = f"slm-{endpoint_id}-hpa"
+            else:
+                hpa_name = deployment_name.replace("-v", "-hpa")  # Fallback
             try:
                 self.autoscaling_v2.delete_namespaced_horizontal_pod_autoscaler(
                     name=hpa_name,
