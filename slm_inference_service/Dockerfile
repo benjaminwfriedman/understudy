@@ -7,11 +7,22 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     git \
+    cmake \
+    build-essential \
+    libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Clone and build llama.cpp for conversion tools
+RUN git clone https://github.com/ggerganov/llama.cpp.git /opt/llama.cpp && \
+    cd /opt/llama.cpp && \
+    pip install -r requirements.txt && \
+    cmake -B build -DLLAMA_CURL=OFF && \
+    cmake --build build --config Release
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir transformers peft && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
