@@ -233,19 +233,94 @@ async def main():
     # Compile the graph
     app = workflow.compile()
     
-    # Test scenarios
+    # Extended test scenarios - 20+ for comprehensive testing
     scenarios = [
+        # Cost Analysis Scenarios (5)
         {
             "query": "I'm spending $500/month on OpenAI API calls for my customer support bot. How much could I save with Understudy if it achieves 50x cost reduction?",
-            "description": "Cost analysis scenario"
+            "description": "Basic cost analysis scenario"
         },
+        {
+            "query": "Our e-commerce platform makes 10,000 API calls daily at $0.002 per call. What would the monthly savings be with 100x reduction?",
+            "description": "High-volume cost analysis"
+        },
+        {
+            "query": "We're evaluating switching from GPT-4 to GPT-3.5-turbo plus Understudy SLM. Current spend is $2000/month. Calculate potential savings.",
+            "description": "Model migration cost analysis"
+        },
+        {
+            "query": "Enterprise customer with $15,000 monthly AI costs across 50 applications. What's the ROI timeline with Understudy?",
+            "description": "Enterprise cost analysis"
+        },
+        {
+            "query": "Startup with limited budget spends $200/month on AI. How quickly would Understudy pay for itself?",
+            "description": "Startup cost optimization"
+        },
+        
+        # Training Analysis Scenarios (5)
         {
             "query": "I have 1000 customer support conversations collected. How long would it take to train an SLM, and what's the carbon footprint?",
-            "description": "Training and carbon analysis scenario"
+            "description": "Basic training analysis"
         },
         {
+            "query": "We have 50,000 diverse conversations from multiple domains. What training approach and timeline would you recommend?",
+            "description": "Large-scale training planning"
+        },
+        {
+            "query": "Medical chatbot with 5,000 specialized conversations. What are the training considerations for sensitive data?",
+            "description": "Specialized domain training"
+        },
+        {
+            "query": "Financial services with compliance requirements. How do we ensure data privacy during training?",
+            "description": "Compliance-focused training"
+        },
+        {
+            "query": "Multilingual support bot with conversations in 5 languages. Can we train one model or need separate ones?",
+            "description": "Multilingual training strategy"
+        },
+        
+        # Carbon & Environmental Scenarios (5)
+        {
             "query": "My current LLM usage consumes about 2.5 kWh per month. What would be the carbon emissions if I'm based in Canada?",
-            "description": "Carbon footprint analysis"
+            "description": "Basic carbon footprint analysis"
+        },
+        {
+            "query": "Large corporation with data centers in US, EU, and Asia. How do regional carbon factors affect our AI emissions?",
+            "description": "Multi-region carbon analysis"
+        },
+        {
+            "query": "Green tech company wants carbon-neutral AI operations. What's the minimum usage needed to offset training emissions?",
+            "description": "Carbon neutrality planning"
+        },
+        {
+            "query": "Government agency required to report emissions. How do we calculate and document AI-related carbon impact?",
+            "description": "Compliance carbon reporting"
+        },
+        {
+            "query": "Sustainability-focused startup. How can we measure and communicate our AI carbon savings to investors?",
+            "description": "Investment-focused carbon metrics"
+        },
+        
+        # Complex Multi-Agent Scenarios (5)
+        {
+            "query": "Planning a complete AI infrastructure overhaul for enterprise. Need cost, training, and environmental analysis for board presentation.",
+            "description": "Comprehensive enterprise analysis"
+        },
+        {
+            "query": "SaaS platform with varying workloads. How do we optimize costs while maintaining performance during peak times?",
+            "description": "Dynamic workload optimization"
+        },
+        {
+            "query": "Research institution with grant funding. Need detailed justification for Understudy adoption including all technical and financial aspects.",
+            "description": "Grant justification analysis"
+        },
+        {
+            "query": "Healthcare system migration from legacy AI. Analyze costs, training requirements, compliance, and environmental impact.",
+            "description": "Healthcare migration planning"
+        },
+        {
+            "query": "International consulting firm. How do we present Understudy value proposition to clients across different industries and regions?",
+            "description": "Cross-industry value analysis"
         }
     ]
     
