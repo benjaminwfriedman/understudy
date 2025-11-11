@@ -10,7 +10,9 @@ export const NewEndpoint: React.FC = () => {
     description: '',
     llm_provider: 'openai',
     llm_model: 'gpt-4o-mini',
-    langchain_compatible: true
+    langchain_compatible: true,
+    enable_compression: false,
+    compression_target_ratio: null as number | null
   });
   const [loading, setLoading] = useState(false);
 
@@ -42,10 +44,20 @@ export const NewEndpoint: React.FC = () => {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: type === 'checkbox' ? (e.target as HTMLInputElement).checked : value
-    }));
+    
+    if (name === 'enable_compression') {
+      const checked = (e.target as HTMLInputElement).checked;
+      setFormData(prev => ({
+        ...prev,
+        enable_compression: checked,
+        compression_target_ratio: checked ? 0.5 : null
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        [name]: type === 'checkbox' ? (e.target as HTMLInputElement).checked : value
+      }));
+    }
   };
 
   return (
@@ -167,6 +179,56 @@ export const NewEndpoint: React.FC = () => {
                   <p className="text-xs text-gray-500 mt-1">
                     Enable LangChain compatibility for easier integration
                   </p>
+                </div>
+
+                {/* Prompt Compression */}
+                <div className="border-t border-gray-200 pt-6">
+                  <h3 className="text-lg font-medium text-gray-900 mb-4">Prompt Compression</h3>
+                  
+                  <div className="space-y-4">
+                    {/* Enable Compression */}
+                    <div>
+                      <div className="flex items-center">
+                        <input
+                          type="checkbox"
+                          id="enable_compression"
+                          name="enable_compression"
+                          checked={formData.enable_compression}
+                          onChange={handleChange}
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                        />
+                        <label htmlFor="enable_compression" className="ml-2 block text-sm text-gray-700">
+                          Enable Prompt Compression
+                        </label>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Compress prompts to reduce token usage and costs while maintaining quality
+                      </p>
+                    </div>
+
+                    {/* Compression Target Ratio */}
+                    {formData.enable_compression && (
+                      <div>
+                        <label htmlFor="compression_target_ratio" className="block text-sm font-medium text-gray-700 mb-2">
+                          Target Compression Ratio
+                        </label>
+                        <input
+                          type="number"
+                          id="compression_target_ratio"
+                          name="compression_target_ratio"
+                          value={formData.compression_target_ratio || ''}
+                          onChange={handleChange}
+                          min="0.20"
+                          max="0.80"
+                          step="0.05"
+                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-600 focus:border-transparent"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Range: 0.20-0.80. Lower values = more compression. 0.50 means compress to 50% of original size.
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 

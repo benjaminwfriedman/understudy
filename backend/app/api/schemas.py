@@ -14,6 +14,8 @@ class EndpointConfigCreate(BaseModel):
     track_carbon: bool = True
     max_training_examples: int = 1000
     training_frequency_hours: int = 24
+    enable_compression: bool = False
+    compression_target_ratio: Optional[float] = None
 
 
 class EndpointCreate(BaseModel):
@@ -34,6 +36,8 @@ class EndpointConfigResponse(BaseModel):
     track_carbon: bool
     max_training_examples: int
     training_frequency_hours: int
+    enable_compression: bool
+    compression_target_ratio: Optional[float]
     
     class Config:
         from_attributes = True
@@ -158,6 +162,9 @@ class MetricsSummary(BaseModel):
     avg_latency_reduction_ms: float
     llm_avg_cost: Optional[float] = None
     slm_avg_cost: Optional[float] = None
+    total_compressed_requests: Optional[int] = None
+    avg_tokens_saved: Optional[float] = None
+    compression_cost_savings: Optional[float] = None
 
 
 # Carbon schemas

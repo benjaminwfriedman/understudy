@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import Optional, List
+from typing import Optional, List, Dict
 import os
 from dotenv import load_dotenv
 
@@ -32,6 +32,34 @@ class Settings(BaseSettings):
     # LLM Providers
     OPENAI_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
+    
+    # Azure Functions - Prompt Compression
+    AZURE_FUNCTION_URL: str = "https://my-prompt-compressor-func.azurewebsites.net/api/compress"
+    AZURE_FUNCTION_KEY: Optional[str] = None  # Azure Function authentication key
+    COMPRESSION_TIMEOUT_SECONDS: int = 30  # Timeout for compression requests
+    
+    # Model Pricing (per 1000 tokens)
+    MODEL_PRICING: Dict[str, float] = {
+        # OpenAI Models
+        "gpt-4": 0.03,
+        "gpt-4-turbo": 0.01,
+        "gpt-4o": 0.005,
+        "gpt-4o-mini": 0.00015,
+        "gpt-3.5-turbo": 0.0015,
+        
+        # Anthropic Models  
+        "claude-3-opus": 0.015,
+        "claude-3-sonnet": 0.003,
+        "claude-3-haiku": 0.00025,
+        "claude-3-5-sonnet": 0.003,
+        "claude-3-5-haiku": 0.001,
+        
+        # Understudy SLM Inference
+        "understudy-slm": 0.0001,  # Very low cost for local SLM inference
+        
+        # Default fallback
+        "default": 0.002
+    }
     
     # Model Paths
     BASE_MODEL_PATH: str = "meta-llama/Llama-3.2-1B"
