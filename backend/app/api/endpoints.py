@@ -9,7 +9,7 @@ from app.models import (
     TrainingRun, Metric, CarbonEmission, Comparison
 )
 from app.api.schemas import (
-    EndpointCreate, EndpointResponse, InferenceRequest, InferenceResponse,
+    EndpointCreate, EndpointConfigCreate, EndpointResponse, InferenceRequest, InferenceResponse,
     TrainingRequest, TrainingResponse, TrainingRunResponse, MetricResponse,
     MetricsSummary, CarbonSummary, CarbonTimeline, HealthResponse,
     ExampleResponse, ExamplesListResponse, ComparisonResponse
@@ -78,7 +78,6 @@ async def create_endpoint(
     await db.flush()
     
     # Create config
-    from app.api.schemas import EndpointConfigCreate
     config_data = endpoint_data.config or EndpointConfigCreate()
     config = EndpointConfig(
         endpoint_id=endpoint.id,
@@ -150,6 +149,33 @@ async def delete_endpoint(
     await db.commit()
     
     return {"message": "Endpoint deleted successfully"}
+
+
+@router.put("/endpoints/{endpoint_id}/config")
+async def update_endpoint_config(
+    endpoint_id: str,
+    config_data: EndpointConfigCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Update endpoint configuration including compression settings."""
+    endpoint = await db.get(Endpoint, endpoint_id)
+    if not endpoint:
+        raise HTTPException(status_code=404, detail="Endpoint not found")
+    
+    config = await db.get(EndpointConfig, endpoint_id)
+    if not config:
+        # Create config if it doesn't exist
+        config = EndpointConfig(endpoint_id=endpoint_id)
+        db.add(config)
+    
+    # Update config fields
+    for field, value in config_data.dict().items():
+        setattr(config, field, value)
+    
+    await db.commit()
+    await db.refresh(config)
+    
+    return config
 
 
 # Inference
@@ -418,6 +444,32 @@ async def get_metrics_summary(
     
     avg_latency_reduction = llm_avg_latency - slm_avg_latency if slm_avg_latency > 0 else 0
     
+    # Calculate compression metrics
+    endpoint = await db.get(Endpoint, endpoint_id)
+    total_compressed_requests = await db.scalar(
+        select(func.count(InferenceLog.id))
+        .where(InferenceLog.endpoint_id == endpoint_id)
+        .where(InferenceLog.original_tokens.isnot(None))
+        .where(InferenceLog.compressed_tokens.isnot(None))
+        .where(InferenceLog.created_at >= start_date)
+    ) or 0
+    
+    avg_tokens_saved = await db.scalar(
+        select(func.avg(InferenceLog.original_tokens - InferenceLog.compressed_tokens))
+        .where(InferenceLog.endpoint_id == endpoint_id)
+        .where(InferenceLog.original_tokens.isnot(None))
+        .where(InferenceLog.compressed_tokens.isnot(None))
+        .where(InferenceLog.created_at >= start_date)
+    ) or 0
+    
+    # Calculate compression cost savings using actual model pricing
+    compression_cost_savings = 0
+    if avg_tokens_saved > 0 and endpoint and total_compressed_requests > 0:
+        from app.core.config import settings
+        model_price_per_1k = settings.MODEL_PRICING.get(endpoint.llm_model, settings.MODEL_PRICING["default"])
+        total_tokens_saved = float(avg_tokens_saved) * total_compressed_requests
+        compression_cost_savings = (total_tokens_saved / 1000.0) * model_price_per_1k
+    
     return MetricsSummary(
         endpoint_id=endpoint_id,
         avg_similarity=float(avg_similarity),
@@ -427,7 +479,10 @@ async def get_metrics_summary(
         total_cost_saved=float(total_cost_saved),
         avg_latency_reduction_ms=float(avg_latency_reduction),
         llm_avg_cost=float(llm_avg_cost) if llm_avg_cost else None,
-        slm_avg_cost=float(slm_avg_cost) if slm_avg_cost else None
+        slm_avg_cost=float(slm_avg_cost) if slm_avg_cost else None,
+        total_compressed_requests=total_compressed_requests,
+        avg_tokens_saved=float(avg_tokens_saved),
+        compression_cost_savings=float(compression_cost_savings)
     )
 
 

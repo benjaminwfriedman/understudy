@@ -38,6 +38,10 @@ class InferenceLog(Base):
     id = Column(String, primary_key=True, default=generate_uuid)
     endpoint_id = Column(String, ForeignKey("endpoints.id"), nullable=False)
     input_text = Column(Text, nullable=False)
+    original_prompt = Column(Text)  # Original prompt before compression
+    compressed_prompt = Column(Text)  # Compressed prompt
+    original_tokens = Column(Integer)  # Token count of original prompt
+    compressed_tokens = Column(Integer)  # Token count of compressed prompt
     llm_output = Column(Text)
     slm_output = Column(Text)
     model_used = Column(String, nullable=False)  # 'llm' or 'slm'
@@ -169,6 +173,8 @@ class EndpointConfig(Base):
     track_carbon = Column(Boolean, default=True)
     max_training_examples = Column(Integer, default=1000)
     training_frequency_hours = Column(Integer, default=24)
+    enable_compression = Column(Boolean, default=False)
+    compression_target_ratio = Column(Float, default=None)
     
     # Relationships
     endpoint = relationship("Endpoint", back_populates="config")

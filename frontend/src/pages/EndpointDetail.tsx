@@ -61,6 +61,86 @@ interface OverviewTabProps {
 }
 
 const OverviewTab: React.FC<OverviewTabProps> = ({ endpoint, metrics, trainingRuns, examplesStats }) => {
+  const [configState, setConfigState] = useState<{
+    enable_compression: boolean;
+    compression_target_ratio: number | null;
+  }>({
+    enable_compression: endpoint.config?.enable_compression || false,
+    compression_target_ratio: endpoint.config?.compression_target_ratio || 0.5,
+  });
+  
+  const handleCompressionToggle = async () => {
+    try {
+      const newValue = !configState.enable_compression;
+      const newRatio = newValue ? 0.5 : null;
+      
+      const response = await fetch(`/api/v1/endpoints/${endpoint.id}/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          training_batch_size: endpoint.config?.training_batch_size || 100,
+          similarity_threshold: endpoint.config?.similarity_threshold || 0.95,
+          auto_switchover: endpoint.config?.auto_switchover || false,
+          lora_r: endpoint.config?.lora_r || 8,
+          lora_alpha: endpoint.config?.lora_alpha || 16,
+          learning_rate: endpoint.config?.learning_rate || 0.0003,
+          track_carbon: endpoint.config?.track_carbon || true,
+          max_training_examples: endpoint.config?.max_training_examples || 1000,
+          training_frequency_hours: endpoint.config?.training_frequency_hours || 24,
+          enable_compression: newValue,
+          compression_target_ratio: newRatio
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to update config');
+      }
+      
+      setConfigState({
+        enable_compression: newValue,
+        compression_target_ratio: newRatio
+      });
+    } catch (error) {
+      console.error('Failed to update compression config:', error);
+      alert('Failed to update compression settings');
+    }
+  };
+  
+  const handleRatioChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newRatio = parseFloat(e.target.value);
+    
+    try {
+      const response = await fetch(`/api/v1/endpoints/${endpoint.id}/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          training_batch_size: endpoint.config?.training_batch_size || 100,
+          similarity_threshold: endpoint.config?.similarity_threshold || 0.95,
+          auto_switchover: endpoint.config?.auto_switchover || false,
+          lora_r: endpoint.config?.lora_r || 8,
+          lora_alpha: endpoint.config?.lora_alpha || 16,
+          learning_rate: endpoint.config?.learning_rate || 0.0003,
+          track_carbon: endpoint.config?.track_carbon || true,
+          max_training_examples: endpoint.config?.max_training_examples || 1000,
+          training_frequency_hours: endpoint.config?.training_frequency_hours || 24,
+          enable_compression: configState.enable_compression,
+          compression_target_ratio: newRatio
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to update config');
+      }
+      
+      setConfigState(prev => ({
+        ...prev,
+        compression_target_ratio: newRatio
+      }));
+    } catch (error) {
+      console.error('Failed to update compression ratio:', error);
+      alert('Failed to update compression ratio');
+    }
+  };
   const isActive = endpoint.status === 'active';
   const isTraining = endpoint.status === 'training';
 
@@ -184,6 +264,47 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ endpoint, metrics, trainingRu
               View Logs
             </button>
           </div>
+
+          {/* Compression Savings Display */}
+          {configState.enable_compression && (
+            <div className="mt-6 bg-orange-50 border border-orange-200 rounded-lg p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <span className="text-orange-600 mr-2">🗜️</span>
+                  <h3 className="text-sm font-medium text-orange-800">Prompt Compression Active</h3>
+                </div>
+                <div className="text-xs text-orange-600 bg-orange-100 px-2 py-1 rounded">
+                  {configState.compression_target_ratio ? 
+                    `${Math.round((1 - configState.compression_target_ratio) * 100)}% compression target` : 
+                    'Default compression'
+                  }
+                </div>
+              </div>
+              
+              <div className="mt-3 grid grid-cols-3 gap-4">
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-orange-700">
+                    {metrics?.total_compressed_requests || 0}
+                  </div>
+                  <div className="text-xs text-orange-600">Compressed Requests</div>
+                </div>
+                
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-orange-700">
+                    {metrics?.avg_tokens_saved ? Math.round(metrics.avg_tokens_saved) : 0}
+                  </div>
+                  <div className="text-xs text-orange-600">Avg Tokens Saved</div>
+                </div>
+                
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-orange-700">
+                    ${metrics?.compression_cost_savings?.toFixed(3) || '0.000'}
+                  </div>
+                  <div className="text-xs text-orange-600">Cost Savings</div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Control Panel */}
@@ -239,6 +360,55 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ endpoint, metrics, trainingRu
             <button className="w-full bg-blue-600 text-white text-sm font-semibold py-3 rounded-lg hover:bg-blue-700 transition-colors">
               🔄 Trigger Training Now
             </button>
+
+            {/* Prompt Compression */}
+            <div className="border-t border-gray-200 pt-6">
+              <h4 className="text-sm font-semibold text-gray-900 mb-3">🗜️ Prompt Compression</h4>
+              
+              {/* Enable Compression Toggle */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Enable Compression</label>
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={handleCompressionToggle}
+                    className={`w-11 h-6 rounded-full relative transition-colors ${
+                      configState.enable_compression ? 'bg-green-500' : 'bg-gray-300'
+                    }`}
+                  >
+                    <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 shadow-sm transition-transform ${
+                      configState.enable_compression ? 'right-0.5' : 'left-0.5'
+                    }`}></div>
+                  </button>
+                  <span className="text-sm font-medium text-gray-700">
+                    {configState.enable_compression ? 'ON' : 'OFF'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Compression Target Ratio */}
+              {configState.enable_compression && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Target Compression Ratio</label>
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="number" 
+                      min="0.20"
+                      max="0.80"
+                      step="0.05"
+                      value={configState.compression_target_ratio || 0.5}
+                      onChange={handleRatioChange}
+                      className="w-20 px-3 py-2 border border-gray-300 rounded-md text-sm"
+                    />
+                    <span className="text-sm text-gray-600">
+                      ({configState.compression_target_ratio ? Math.round((1 - configState.compression_target_ratio) * 100) : 50}% compression)
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Lower values = more compression
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -328,7 +498,7 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ endpoint, metrics, trainingRu
       </div>
 
       {/* Section 3: Key Metrics Grid */}
-      <div className="grid grid-cols-4 gap-6 mb-8">
+      <div className={`grid gap-6 mb-8 ${endpoint.config?.enable_compression ? 'grid-cols-5' : 'grid-cols-4'}`}>
         <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
           <h4 className="text-sm font-medium text-gray-600 mb-2">Total Requests</h4>
           <div className="text-3xl font-bold text-gray-900 mb-1">{metrics?.total_inferences || 0}</div>
@@ -358,6 +528,36 @@ const OverviewTab: React.FC<OverviewTabProps> = ({ endpoint, metrics, trainingRu
           <div className="text-sm text-gray-600">SLM usage rate</div>
         </div>
       </div>
+
+      {/* Compression Metrics Section */}
+      {metrics && (metrics.total_compressed_requests || 0) > 0 && (
+        <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm mb-8">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Prompt Compression Metrics</h3>
+          
+          <div className="grid grid-cols-3 gap-6">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-orange-600 mb-1">
+                {metrics.total_compressed_requests || 0}
+              </div>
+              <div className="text-sm text-gray-600">Compressed Requests</div>
+            </div>
+            
+            <div className="text-center">
+              <div className="text-2xl font-bold text-green-600 mb-1">
+                {metrics.avg_tokens_saved ? Math.round(metrics.avg_tokens_saved) : 0}
+              </div>
+              <div className="text-sm text-gray-600">Avg Tokens Saved</div>
+            </div>
+            
+            <div className="text-center">
+              <div className="text-2xl font-bold text-blue-600 mb-1">
+                ${metrics.compression_cost_savings?.toFixed(2) || '0.00'}
+              </div>
+              <div className="text-sm text-gray-600">Compression Savings</div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

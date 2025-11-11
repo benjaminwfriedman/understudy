@@ -10,6 +10,8 @@ export interface EndpointConfig {
   track_carbon: boolean;
   max_training_examples: number;
   training_frequency_hours: number;
+  enable_compression: boolean;
+  compression_target_ratio: number | null;
 }
 
 export interface Endpoint {
@@ -62,6 +64,9 @@ export interface Metrics {
   avg_latency_reduction_ms: number;
   llm_avg_cost?: number;
   slm_avg_cost?: number;
+  total_compressed_requests?: number;
+  avg_tokens_saved?: number;
+  compression_cost_savings?: number;
 }
 
 export interface Example {

@@ -5,7 +5,8 @@ from app.models.models import (
     TrainingRun,
     Metric,
     CarbonEmission,
-    EndpointConfig
+    EndpointConfig,
+    Comparison
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "Metric",
     "CarbonEmission",
     "EndpointConfig",
+    "Comparison",
 ]

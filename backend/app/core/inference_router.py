@@ -1,6 +1,7 @@
 from typing import Optional, List, Dict, Any
 from app.models import Endpoint, InferenceLog, EndpointConfig, Metric
 from app.models.database import AsyncSessionLocal
+from app.core.compression import compression_service
 from sqlalchemy import select
 from datetime import datetime
 import time
@@ -78,6 +79,37 @@ class InferenceRouter:
                 session.add(config)
                 await session.commit()
         
+        # Handle prompt compression if enabled
+        original_prompt = prompt or self._messages_to_text(messages)
+        compressed_prompt = None
+        compression_metrics = None
+        
+        if config.enable_compression and config.compression_target_ratio and original_prompt:
+            logger.info(f"Attempting compression for endpoint {endpoint_id}: ratio={config.compression_target_ratio}")
+            compressed_prompt, compression_metrics = await compression_service.compress_prompt(
+                original_prompt,
+                config.compression_target_ratio,
+                endpoint.llm_model
+            )
+            logger.info(f"Compression result: success={compression_metrics.get('compression_successful', False) if compression_metrics else False}")
+            
+            # Use compressed prompt if compression was successful
+            if compressed_prompt:
+                if messages:
+                    # For messages, replace the content of the last user message
+                    for msg in reversed(messages):
+                        if msg.type == "user" or msg.type == "human":
+                            msg.content = compressed_prompt
+                            break
+                else:
+                    prompt = compressed_prompt
+                    
+                logger.info(f"Using compressed prompt: {compression_metrics['tokens_saved']} tokens saved")
+            else:
+                logger.warning("Prompt compression failed, using original prompt")
+        else:
+            logger.info(f"Compression skipped: enabled={config.enable_compression}, ratio={config.compression_target_ratio}, has_prompt={bool(original_prompt)}")
+        
         # Determine if we should use SLM
         use_slm = (
             endpoint.status == 'active' and 
@@ -145,10 +177,14 @@ class InferenceRouter:
         
         latency_ms = int((time.time() - start_time) * 1000)
         
-        # Log inference
+        # Log inference with compression data
         await self._log_inference(
             endpoint_id=endpoint_id,
             input_text=prompt or self._messages_to_text(messages),
+            original_prompt=original_prompt if config.enable_compression else None,
+            compressed_prompt=compressed_prompt if config.enable_compression else None,
+            original_tokens=compression_metrics["original_tokens"] if compression_metrics else None,
+            compressed_tokens=compression_metrics["compressed_tokens"] if compression_metrics else None,
             output=output,
             model_used=model_used,
             latency_ms=latency_ms,
@@ -183,6 +219,10 @@ class InferenceRouter:
         model_used: str,
         latency_ms: int,
         cost_usd: float,
+        original_prompt: Optional[str] = None,
+        compressed_prompt: Optional[str] = None,
+        original_tokens: Optional[int] = None,
+        compressed_tokens: Optional[int] = None,
         langchain_metadata: Optional[Dict] = None
     ):
         """Log inference to database."""
@@ -190,6 +230,10 @@ class InferenceRouter:
             log = InferenceLog(
                 endpoint_id=endpoint_id,
                 input_text=input_text,
+                original_prompt=original_prompt,
+                compressed_prompt=compressed_prompt,
+                original_tokens=original_tokens,
+                compressed_tokens=compressed_tokens,
                 llm_output=output if model_used == "llm" else None,
                 slm_output=output if model_used == "slm" else None,
                 model_used=model_used,
